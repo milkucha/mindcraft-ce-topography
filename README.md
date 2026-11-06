@@ -226,6 +226,20 @@ Commands: `!rememberPlace(name,x,z)`, `!recallPlace(name)`, `!knownPlaces`, `!wh
 
 Settings (all optional, read from settings or the profile): `core_memory_chars` (800), `memory_archive` (true), `memory_backend` (`auto|sqlite|jsonl`), `memory_recall_chars` (900), `memory_places_chars` (150), `memory_use_embeddings` (false), `memory_auto_observe` (true; needs the terrain service), `memory_resurvey_minutes` (30), `topography_seen_only` (true; sends `agent=<name>` on terrain requests and reports seen chunks via `POST /seen`).
 
+## Worlds and the A/B agents
+
+Bot data (memory, histories, logs, screenshots, action code) is namespaced per Minecraft world: set
+`world_name` in `settings.js` (or the `MINDCRAFT_WORLD` environment variable; `scripts/run-all.ps1`
+sets it from the save folder name) and files go to `bots/<name>/worlds/<world_name>/`. Empty keeps the
+legacy `bots/<name>/`. Use a new name for every new world; the terrain service keeps a separate
+database per world on its own.
+
+`agent_a.json` .. `agent_d.json` are an A/B set on one model (`deepseek-flash`): A = upstream
+Mindcraft (every fork feature off, upstream prompts), B = A + vision (`gemini-3.5-flash`), C = full
+topography + memory pipeline, D = C + vision. Names are `Agent_A`..`Agent_D` (Mindcraft requires
+3-16 characters). Fork features can be switched per profile: `topography_enabled`,
+`memory_archive`, `memory_auto_observe`, `idle_chat`, `long_task_notice`.
+
 ## Specifying Profiles via Command Line
 
 By default, the program will use the profiles specified in `settings.js`. You can specify one or more agent profiles using the `--profiles` argument: `node main.js --profiles ./profiles/andy.json ./profiles/jill.json`
