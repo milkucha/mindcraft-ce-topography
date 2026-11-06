@@ -23,8 +23,6 @@ export class VisionInterpreter {
         }
 
         let result;
-        const player_position = player.position;
-        const player_pos = `(${Math.floor(player_position.x)}, ${Math.floor(player_position.y)}, ${Math.floor(player_position.z)})`;
         if (direction === 'with') {
             await bot.look(player.yaw, player.pitch);
             const deg = ((player.yaw * 180 / Math.PI) % 360 + 360) % 360;
@@ -32,10 +30,10 @@ export class VisionInterpreter {
                 : deg < 135 ? 'west'
                 : deg < 225 ? 'north'
                 : 'east';
-            result = `Looking in the same direction as ${player_name} (facing ${facing}) from ${player_pos}\n`;
+            result = `Looking in the same direction as ${player_name} (facing ${facing})\n`;
         } else {
             await bot.lookAt(new Vec3(player.position.x, player.position.y + player.height, player.position.z));
-            result = `Looking at player ${player_name} at ${player_pos}\n`;
+            result = `Looking at player ${player_name}\n`;
         }
 
         if (this.allow_vision && this.agent.prompter.vision_model?.sendVisionRequest) {

@@ -435,7 +435,7 @@ export const actionsList = [
     },
     {
         name: '!lookAtPlayer',
-        description: 'Look at a player or look in the same direction as the player. Returns the player\'s facing direction and coordinates for describing their view.',
+        description: 'Look at a player or look in the same direction as the player. Returns the facing direction.',
         params: {
             'player_name': { type: 'string', description: 'Name of the target player' },
             'direction': {

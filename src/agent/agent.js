@@ -21,6 +21,8 @@ import { log, validateNameFormat, handleDisconnection } from './connection_handl
 export class Agent {
     async start(load_mem=false, init_message=null, count_id=0) {
         this.last_sender = null;
+        this.last_activity = Date.now();
+        this._idle_chat_pending = false;
         this.count_id = count_id;
         this._disconnectHandled = false;
 
@@ -250,6 +252,7 @@ export class Agent {
     }
 
     async handleMessage(source, message, max_responses=null) {
+        this.last_activity = Date.now();
         await this.checkTaskDone();
         if (!source || !message) {
             console.warn('Received empty message from', source);
@@ -516,13 +519,71 @@ export class Agent {
     }
 
     async update(delta) {
+        if (!this.isIdle() || this.bot?.pathfinder?.isMoving?.())
+            this.last_activity = Date.now();
         await this.bot.modes.update();
         this.self_prompter.update(delta);
         await this.checkTaskDone();
+        this.maybeIdleChat().catch(error => console.warn('Idle chat failed:', error?.message || error));
     }
 
     isIdle() {
         return !this.actions.executing;
+    }
+
+    getIdleChatConfig() {
+        const profile = this.prompter?.profile || {};
+        return {
+            enabled: profile.idle_chat ?? settings.idle_chat ?? true,
+            interval: Number(profile.idle_chat_interval_ms ?? settings.idle_chat_interval_ms ?? 120000),
+        };
+    }
+
+    findIdleChatTarget() {
+        if (!this.bot?.entity)
+            return null;
+        let best = null;
+        for (const [name, player] of Object.entries(this.bot.players || {})) {
+            if (name === this.name || convoManager.isOtherAgent(name) || !player?.entity)
+                continue;
+            const distance = this.bot.entity.position.distanceTo(player.entity.position);
+            if (!best || distance < best.distance)
+                best = { name, distance };
+        }
+        return best?.name || null;
+    }
+
+    async maybeIdleChat() {
+        if (this._idle_chat_pending || !this.bot?.entity)
+            return;
+        if (this.self_prompter.isActive() || this.self_prompter.isPaused())
+            return;
+        if (this.task?.data)
+            return;
+        const { enabled, interval } = this.getIdleChatConfig();
+        if (!enabled || !Number.isFinite(interval) || interval <= 0)
+            return;
+        if (Date.now() - this.last_activity < interval)
+            return;
+        const target = this.findIdleChatTarget();
+        if (!target)
+            return;
+
+        this.last_activity = Date.now();
+        this._idle_chat_pending = true;
+        this.last_sender = target;
+        const prompt =
+            `You have been idle for a while. Say one short, natural sentence to ${target}: ` +
+            `either comment on something you notice around you or ask a casual question. ` +
+            `Do not use commands. Do not give exact coordinates or distances. ` +
+            `Draw on your memory if useful.`;
+        try {
+            await this.handleMessage('system', prompt, 1);
+        } catch (error) {
+            console.warn('Idle chat failed:', error?.message || error);
+        } finally {
+            this._idle_chat_pending = false;
+        }
     }
     
 
