@@ -1,0 +1,6 @@
+{
+    "name": "Agent_D",
+    "model": "deepseek-flash",
+    "allow_vision": true,
+    "vision_model": "gemini-3.5-flash"
+}

@@ -1,3 +1,4 @@
+import { botDir } from '../../utils/botpaths.js';
 /**
  * MemoryManager: the agent-facing facade over the store. Every method is safe to call when the store
  * failed to open (no-ops) and never throws into the agent loop.
@@ -19,7 +20,7 @@ export class MemoryManager {
         let store = null;
         try {
             if (cfg(agent, 'memory_archive', true) !== false)
-                store = openStore(path ?? `./bots/${agent.name}/memory.db`, { backend: cfg(agent, 'memory_backend', backend) });
+                store = openStore(path ?? `${botDir(agent.name)}/memory.db`, { backend: cfg(agent, 'memory_backend', backend) });
         } catch (e) {
             console.warn('[memory] could not open memory store:', e?.message || e);
         }
