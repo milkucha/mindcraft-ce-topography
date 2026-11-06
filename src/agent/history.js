@@ -2,6 +2,13 @@ import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'fs';
 import { NPCData } from './npc/data.js';
 import settings from './settings.js';
 
+const TRANSIENT_TERRAIN_PATTERN = /^(?:SYSTEM:\s*)?(TOPOGRAPHY|SHORELINE|AREA_COMPOSITION|RECALL|CHUNK)\b/;
+
+function isTransientTerrain(turn) {
+    return turn?.role === 'system'
+        && TRANSIENT_TERRAIN_PATTERN.test((turn.content || '').trim());
+}
+
 
 export class History {
     constructor(agent) {
@@ -32,7 +39,8 @@ export class History {
 
     async summarizeMemories(turns) {
         console.log("Storing memories...");
-        this.memory = await this.agent.prompter.promptMemSaving(turns);
+        const memoryTurns = turns.filter(turn => !isTransientTerrain(turn));
+        this.memory = await this.agent.prompter.promptMemSaving(memoryTurns);
 
         if (this.memory.length > 3000) {
             this.memory = this.memory.slice(0, 3000);
@@ -83,7 +91,7 @@ export class History {
         try {
             const data = {
                 memory: this.memory,
-                turns: this.turns,
+                turns: this.turns.filter(turn => !isTransientTerrain(turn)),
                 self_prompting_state: this.agent.self_prompter.state,
                 self_prompt: this.agent.self_prompter.isStopped() ? null : this.agent.self_prompter.prompt,
                 taskStart: this.agent.task.taskStartTime,
@@ -105,7 +113,7 @@ export class History {
             }
             const data = JSON.parse(readFileSync(this.memory_fp, 'utf8'));
             this.memory = data.memory || '';
-            this.turns = data.turns || [];
+            this.turns = (data.turns || []).filter(turn => !isTransientTerrain(turn));
             console.log('Loaded memory:', this.memory);
             return data;
         } catch (error) {

@@ -111,7 +111,8 @@ export class Agent {
                 clearTimeout(spawnTimeout);
                 addBrowserViewer(this.bot, count_id);
                 console.log('Initializing vision intepreter...');
-                this.vision_interpreter = new VisionInterpreter(this, settings.allow_vision);
+                const allow_vision = this.prompter.profile.allow_vision ?? settings.allow_vision;
+        this.vision_interpreter = new VisionInterpreter(this, allow_vision);
 
                 // wait for a bit so stats are not undefined
                 await new Promise((resolve) => setTimeout(resolve, 1000));
