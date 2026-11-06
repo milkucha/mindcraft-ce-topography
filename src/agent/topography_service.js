@@ -68,6 +68,17 @@ export function terrainUnavailableMessage(agent) {
     return `Terrain data is only available in the overworld (you are in ${getDimension(agent)}).`;
 }
 
+/**
+ * Agent name to send as `agent=` on terrain requests so the service can treat chunks this agent has not
+ * seen as unexplored. null when disabled (setting topography_seen_only === false) or the name is unknown.
+ */
+export function terrainAgentName(agent) {
+    const profile = agent?.prompter?.profile;
+    const seenOnly = profile?.topography_seen_only ?? settings.topography_seen_only ?? true;
+    const name = agent?.name;
+    return seenOnly !== false && name ? String(name) : null;
+}
+
 function isEnabled(opts) {
     if (opts.enabled !== undefined)
         return opts.enabled !== false;
@@ -294,12 +305,16 @@ export function formatPerception(data) {
 
     if (Number(data.missing_chunks) > 0)
         lines.push(`missing: ${data.missing_chunks} chunks`);
+    if (Number(data.unexplored_chunks) > 0)
+        lines.push(`unexplored: ${data.unexplored_chunks} chunks (never seen by you)`);
 
     return truncateBlock(lines.join('\n'));
 }
 
-function buildUrl(position, opts, dimension) {
+function buildUrl(position, opts, dimension, agentName = null) {
     const search = new URLSearchParams();
+    if (agentName)
+        search.set('agent', agentName);
     search.set('x', String(position.x));
     search.set('z', String(position.z));
     if (dimension)
@@ -351,7 +366,7 @@ export async function fetchPerception(agent, opts = {}) {
             console.log(`[topography] perception skipped: dimension ${dimension}`);
         return '';
     }
-    const key = `${position.x},${position.z},${size},${dimension || ''}`;
+    const key = `${position.x},${position.z},${size},${dimension || ''},${terrainAgentName(agent) || ''}`;
     const cached = cache.get(key);
     if (cached && cached.expiresAt > Date.now()) {
         if (opts.debug)
@@ -361,7 +376,7 @@ export async function fetchPerception(agent, opts = {}) {
     if (cached)
         cache.delete(key);
     const timeoutMs = opts.timeout_ms ?? opts.timeoutMs ?? settings.topography_perception_timeout_ms ?? DEFAULT_TIMEOUT_MS;
-    const url = buildUrl(position, opts, dimension);
+    const url = buildUrl(position, opts, dimension, terrainAgentName(agent));
     const started = Date.now();
     try {
         const data = await requestPerception(url, timeoutMs);

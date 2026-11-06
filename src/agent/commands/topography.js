@@ -1,5 +1,6 @@
 import settings from '../settings.js';
 import { planBridge } from '../library/bridge_plan.js';
+import { terrainAgentName } from '../topography_service.js';
 
 const DEFAULT_SERVICE_URL = 'http://127.0.0.1:8090';
 const REQUEST_TIMEOUT_MS = 5000;
@@ -91,9 +92,10 @@ async function queryService(endpoint, params) {
     return payload;
 }
 
-async function runQuery(endpoint, params, formatter) {
+async function runQuery(endpoint, params, formatter, agent = null) {
     try {
-        const data = await queryService(endpoint, params);
+        const agentName = terrainAgentName(agent);
+        const data = await queryService(endpoint, agentName ? { ...params, agent: agentName } : params);
         return formatter(data);
     } catch (error) {
         return `Topography error: ${error.message}`;
@@ -152,6 +154,8 @@ function formatAreaComposition(data) {
     }
     if (data.missing_chunks)
         lines.push(`- missing chunks: ${data.missing_chunks} (not loaded from the save yet).`);
+    if (data.unexplored_chunks > 0)
+        lines.push(`- unexplored: ${data.unexplored_chunks} chunks never seen by you.`);
     return pad(lines.join('\n'));
 }
 
@@ -186,6 +190,8 @@ function formatShoreline(data) {
         lines.push(`- point limit reached (${MAX_SHORELINE_POINTS} of ${data.point_count} points shown).`);
     if (data.missing_chunks)
         lines.push(`- missing chunks: ${data.missing_chunks}`);
+    if (data.unexplored_chunks > 0)
+        lines.push(`- unexplored: ${data.unexplored_chunks} chunks never seen by you.`);
     return pad(lines.join('\n'));
 }
 
@@ -227,6 +233,8 @@ export function formatFlatAreas(data) {
     }
     if (data.missing_chunks)
         lines.push(`- missing chunks: ${data.missing_chunks} (unloaded areas were skipped).`);
+    if (data.unexplored_chunks > 0)
+        lines.push(`- unexplored: ${data.unexplored_chunks} chunks never seen by you.`);
     return pad(lines.join('\n'));
 }
 
@@ -272,6 +280,8 @@ export function formatBridgeSpan(data) {
         lines.push(`- caution: ${cautions.join('; ')}.`);
     if (data.missing_chunks)
         lines.push(`- missing chunks: ${data.missing_chunks}`);
+    if (data.unexplored_chunks > 0)
+        lines.push(`- unexplored: ${data.unexplored_chunks} chunks never seen by you.`);
     return pad(lines.join('\n'));
 }
 
@@ -286,7 +296,7 @@ export const topographyList = [
             'z2': { type: 'int', description: 'End z coordinate.' }
         },
         perform: function (agent, x1, z1, x2, z2) {
-            return runQuery('/topography', { x1, z1, x2, z2 }, formatTopography);
+            return runQuery('/topography', { x1, z1, x2, z2 }, formatTopography, agent);
         }
     },
     {
@@ -298,7 +308,7 @@ export const topographyList = [
             'radius': { type: 'int', description: 'Radius in blocks around the center.', domain: [1, 257, '[)'] }
         },
         perform: function (agent, x, z, radius) {
-            return runQuery('/area_composition', { x, z, radius }, formatAreaComposition);
+            return runQuery('/area_composition', { x, z, radius }, formatAreaComposition, agent);
         }
     },
     {
@@ -310,7 +320,7 @@ export const topographyList = [
             'radius': { type: 'int', description: 'Radius in blocks around the center.', domain: [1, 257, '[)'] }
         },
         perform: function (agent, x, z, radius) {
-            return runQuery('/shoreline', { x, z, radius }, formatShoreline);
+            return runQuery('/shoreline', { x, z, radius }, formatShoreline, agent);
         }
     },
     {
@@ -324,7 +334,7 @@ export const topographyList = [
             'depth': { type: 'int', description: 'Footprint size along z in blocks.', domain: [1, 65, '[)'] }
         },
         perform: function (agent, x, z, radius, width, depth) {
-            return runQuery('/flat_areas', { x, z, radius, width, depth }, formatFlatAreas);
+            return runQuery('/flat_areas', { x, z, radius, width, depth }, formatFlatAreas, agent);
         }
     },
     {
@@ -336,7 +346,7 @@ export const topographyList = [
             'direction': { type: 'string', description: 'north, south, east or west.' }
         },
         perform: function (agent, x, z, direction) {
-            return runQuery('/bridge_span', { x, z, dir: String(direction || '').toLowerCase() }, formatBridgeSpan);
+            return runQuery('/bridge_span', { x, z, dir: String(direction || '').toLowerCase() }, formatBridgeSpan, agent);
         }
     },
     {
@@ -347,7 +357,7 @@ export const topographyList = [
             'z': { type: 'int', description: 'z coordinate to recall.' }
         },
         perform: function (agent, x, z) {
-            return runQuery('/recall', { x, z }, formatRecall);
+            return runQuery('/recall', { x, z }, formatRecall, agent);
         }
     }
 ];

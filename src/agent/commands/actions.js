@@ -1,6 +1,7 @@
 import * as skills from '../library/skills.js';
 import settings from '../settings.js';
 import convoManager from '../conversation.js';
+import pf from 'mineflayer-pathfinder';
 
 
 function runAsAction (actionFn, resume = false, timeout = -1) {
@@ -167,7 +168,7 @@ export const actionsList = [
     },
     {
         name: '!rememberHere',
-        description: 'Save the current location with a given name.',
+        description: 'Save the current location with a given name (stored in your memory archive).',
         params: {'name': { type: 'string', description: 'The name to remember the location as.' }},
         perform: async function (agent, name) {
             const pos = agent.bot.entity.position;
@@ -182,8 +183,14 @@ export const actionsList = [
         perform: runAsAction(async (agent, name) => {
             const pos = agent.memory_bank.recallPlace(name);
             if (!pos) {
-            skills.log(agent.bot, `No location named "${name}" saved.`);
-            return;
+                skills.log(agent.bot, `No location named "${name}" saved.`);
+                return;
+            }
+            if (pos[1] === null || pos[1] === undefined) {
+                // known only as an area (x,z): walk to within ~8 blocks, whatever the height
+                await skills.goToGoal(agent.bot, new pf.goals.GoalNearXZ(pos[0], pos[2], 8));
+                skills.log(agent.bot, `Went toward "${name}" around (${Math.round(pos[0])},${Math.round(pos[2])}); you are now at (${Math.round(agent.bot.entity.position.x)},${Math.round(agent.bot.entity.position.z)}).`);
+                return;
             }
             await skills.goToPosition(agent.bot, pos[0], pos[1], pos[2], 1);
         })

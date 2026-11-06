@@ -1,6 +1,7 @@
 import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'fs';
 import { NPCData } from './npc/data.js';
 import settings from './settings.js';
+import { parseMemoryResponse } from './memory/extract.js';
 
 const TRANSIENT_TERRAIN_PATTERN = /^(?:SYSTEM:\s*)?(TOPOGRAPHY|SHORELINE|AREA_COMPOSITION|RECALL|CHUNK)\b/;
 
@@ -85,12 +86,22 @@ export class History {
     async summarizeMemories(turns) {
         console.log("Storing memories...");
         const memoryTurns = turns.filter(turn => !isTransientTerrain(turn));
-        this.memory = await this.agent.prompter.promptMemSaving(memoryTurns);
+        // Raw record first: the turns are appended to the event log before any LLM call can fail.
+        const archive = this.agent.memory;
+        const eventIds = archive?.logTurns?.(memoryTurns) ?? [];
+        const raw = await this.agent.prompter.promptMemSaving(memoryTurns);
+        const parsed = parseMemoryResponse(raw);
+        // core text: target is settings.core_memory_chars; hard cap leaves 25% slack before truncating
+        const target = Number(settings.core_memory_chars ?? 800);
+        const cap = Math.round(target * 1.25);
+        this.memory = parsed.memory ?? this.memory;
 
-        if (this.memory.length > 3000) {
-            this.memory = this.memory.slice(0, 3000);
-            this.memory += '...(Memory truncated to 500 chars. Compress it more next time)';
+        if (this.memory.length > cap) {
+            this.memory = this.memory.slice(0, cap);
+            this.memory += `...(Memory truncated to ${cap} chars. Compress it more next time)`;
         }
+        if (parsed.facts.length)
+            archive?.ingestSummary?.(memoryTurns, eventIds, parsed.facts);
 
         console.log("Memory updated to: ", this.memory);
     }
@@ -132,6 +143,7 @@ export class History {
                 compactStaleTerrain(this.turns, { position });
         }
         this.turns.push(turn);
+        this.agent.memory?.recordTurn(turn); // raw event log (no LLM)
 
         if (this.turns.length >= this.max_messages) {
             let chunk = this.turns.splice(0, this.summary_chunk_size);

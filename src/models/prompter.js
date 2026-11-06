@@ -167,6 +167,17 @@ export class Prompter {
             prompt = prompt.replaceAll('$EXAMPLES', await examples.createExampleMessage(messages));
         if (prompt.includes('$MEMORY'))
             prompt = prompt.replaceAll('$MEMORY', this.agent.history.memory);
+        if (prompt.includes('$CORE_CHARS'))
+            prompt = prompt.replaceAll('$CORE_CHARS', String(settings.core_memory_chars ?? 800));
+        // Archive recall: relevant records with sources ($RECALL) and a one-line nearby-places index ($PLACES).
+        if (prompt.includes('$RECALL')) {
+            const recalled = await this.agent.memory?.recall(messages) ?? '';
+            prompt = prompt.replaceAll('$RECALL', () => recalled);
+        }
+        if (prompt.includes('$PLACES')) {
+            const places = this.agent.memory?.placesText() ?? '';
+            prompt = prompt.replaceAll('$PLACES', () => places);
+        }
         if (prompt.includes('$TO_SUMMARIZE'))
             prompt = prompt.replaceAll('$TO_SUMMARIZE', stringifyTurns(to_summarize));
         if (prompt.includes('$CONVO'))

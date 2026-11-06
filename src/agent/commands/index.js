@@ -2,12 +2,13 @@ import { getBlockId, getItemId } from "../../utils/mcdata.js";
 import { actionsList } from './actions.js';
 import { queryList } from './queries.js';
 import { topographyList } from './topography.js';
+import { memoryList } from './memory.js';
 import settings from '../settings.js';
 import { terrainUnavailableMessage } from '../topography_service.js';
 
 let suppressNoDomainWarning = true;
 
-const commandList = queryList.concat(topographyList, actionsList);
+const commandList = queryList.concat(topographyList, memoryList, actionsList);
 const commandMap = {};
 for (let command of commandList) {
     commandMap[command.name] = command;

@@ -8,6 +8,7 @@ import { containsCommand, commandExists, executeCommand, truncCommandMessage, is
 import { ActionManager } from './action_manager.js';
 import { NPCContoller } from './npc/controller.js';
 import { MemoryBank } from './memory_bank.js';
+import { MemoryManager } from './memory/index.js';
 import { SelfPrompter } from './self_prompter.js';
 import convoManager from './conversation.js';
 import { handleTranslation, handleEnglishTranslation } from '../utils/translator.js';
@@ -46,6 +47,8 @@ export class Agent {
         this.coder = new Coder(this);
         this.npc = new NPCContoller(this);
         this.memory_bank = new MemoryBank();
+        this.memory = MemoryManager.create(this); // per-agent archive: bots/<name>/memory.db
+        this.memory_bank.attach(this.memory);
         this.self_prompter = new SelfPrompter(this);
         convoManager.initAgent(this);
         await this.prompter.initExamples();
@@ -123,6 +126,7 @@ export class Agent {
                 console.log(`${this.name} spawned.`);
                 this.clearBotLogs();
               
+                this.memory?.attachBot(this.bot);
                 this._setupEventHandlers(save_data, init_message);
                 this.startEvents();
               
@@ -523,6 +527,7 @@ export class Agent {
         if (!this.isIdle() || this.bot?.pathfinder?.isMoving?.())
             this.last_activity = Date.now();
         pushPositionIfMoved(this);
+        this.memory?.tick();
         await this.bot.modes.update();
         this.self_prompter.update(delta);
         await this.checkTaskDone();
