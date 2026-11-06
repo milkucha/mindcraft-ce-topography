@@ -61,6 +61,7 @@ export class ActionManager {
     async _executeAction(actionLabel, actionFn, timeout = 10) {
         let TIMEOUT;
         try {
+            this.agent.bot.interrupt_code = false;
             if (this.last_action_time > 0) {
                 let time_diff = Date.now() - this.last_action_time;
                 if (time_diff < 20) {
