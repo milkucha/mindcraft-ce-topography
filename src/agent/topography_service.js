@@ -127,6 +127,15 @@ function formatComposition(composition) {
         parts.push(`top: ${top.join(', ')}`);
     if (Number.isFinite(composition.artificiality_score))
         parts.push(`artificiality ${formatDecimal(composition.artificiality_score)}`);
+    const engineeredBlocks = Array.isArray(composition.engineered_blocks)
+        ? composition.engineered_blocks
+        : [];
+    const built = engineeredBlocks
+        .filter(pair => Array.isArray(pair) && pair[0])
+        .slice(0, 4)
+        .map(pair => `${formatName(pair[0])} ${Number(pair[1]) || 0}`);
+    if (built.length > 0)
+        parts.push(`built: ${built.join(', ')}`);
     return parts.length > 0 ? parts.join('; ') : null;
 }
 
@@ -191,6 +200,29 @@ export function formatPerception(data) {
         : (Number.isFinite(surface.max_y) && Number.isFinite(surface.min_y) ? surface.max_y - surface.min_y : null);
     const reliefPart = Number.isFinite(relief) ? `relief: ${formatHeight(relief)}; ` : '';
     lines.push(`${reliefPart}biome: ${formatName(data.biome)}`);
+
+    const terrain = data.terrain || {};
+    const highest = terrain.highest;
+    if (highest && Number.isFinite(highest.y)) {
+        const direction = highest.direction || 'here';
+        const where = direction === 'here'
+            ? 'at center'
+            : `${direction}, ~${Math.round(highest.distance)} blocks`;
+        lines.push(`highest ground: ${where}, y=${formatHeight(highest.y)}`);
+    }
+    const byDirection = terrain.highest_by_direction;
+    if (byDirection && typeof byDirection === 'object') {
+        const short = {
+            north: 'N', northeast: 'NE', east: 'E', southeast: 'SE',
+            south: 'S', southwest: 'SW', west: 'W', northwest: 'NW'
+        };
+        const order = ['north', 'northeast', 'east', 'southeast', 'south', 'southwest', 'west', 'northwest'];
+        const parts = order
+            .filter(d => byDirection[d] && Number.isFinite(byDirection[d].y))
+            .map(d => `${short[d]} ${formatHeight(byDirection[d].y)}`);
+        if (parts.length > 0)
+            lines.push(`highest by direction: ${parts.join(' ')}`);
+    }
 
     const composition = formatComposition(data.composition);
     if (composition)

@@ -46,6 +46,20 @@ const perceptionFixture = {
         }
     ],
     surface: { min_y: 63, max_y: 78, avg_y: 68.4, relief: 15 },
+    terrain: {
+        highest: { x: 168, z: -46, y: 78, dx: 48, dz: 0, distance: 48, direction: 'east', material: 'minecraft:stone' },
+        lowest: { x: 120, z: -46, y: 63, dx: 0, dz: 0, distance: 0, direction: 'here', material: 'minecraft:grass_block' },
+        highest_by_direction: {
+            north: { y: 65, distance: 10, direction: 'north' },
+            northeast: { y: 70, distance: 20, direction: 'northeast' },
+            east: { y: 78, distance: 48, direction: 'east' },
+            southeast: { y: 72, distance: 30, direction: 'southeast' },
+            south: { y: 68, distance: 15, direction: 'south' },
+            southwest: { y: 64, distance: 25, direction: 'southwest' },
+            west: { y: 66, distance: 12, direction: 'west' },
+            northwest: { y: 67, distance: 18, direction: 'northwest' }
+        }
+    },
     water: { at_center: false, nearest: { dx: 48, dz: 0, distance: 48, direction: 'east' } },
     biome: 'minecraft:plains',
     composition: {
@@ -58,6 +72,10 @@ const perceptionFixture = {
             ['minecraft:stone', 5000],
             ['minecraft:grass_block', 3200],
             ['minecraft:oak_planks', 100]
+        ],
+        engineered_blocks: [
+            ['minecraft:red_concrete', 64],
+            ['minecraft:copper_block', 40]
         ],
         artificiality_score: 0.01
     },
@@ -177,6 +195,9 @@ test('formatPerception renders a compact LOD block within budget', () => {
     assert.match(block, /nearest water: east, 48 blocks; center: land/);
     assert.match(block, /relief: 15; biome: plains/);
     assert.match(block, /composition: natural 93%, engineered 1%, water 6%; top: stone, grass_block, oak_planks; artificiality 0\.01/);
+    assert.match(block, /highest ground: east, ~48 blocks, y=78/);
+    assert.match(block, /highest by direction: N 65 NE 70 E 78 SE 72 S 68 SW 64 W 66 NW 67/);
+    assert.match(block, /built: red_concrete 64, copper_block 40/);
     assert.ok(block.length <= 1000, `block was ${block.length} characters`);
     assert.doesNotMatch(block, /minecraft:/);
 });

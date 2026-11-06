@@ -216,7 +216,7 @@ export class Prompter {
             prompt = prompt.replaceAll(
                 '$TOPO_GUIDE',
                 perceptionEnabled
-                    ? 'When a TOPOGRAPHY block is present, prefer it for nearby terrain and water before scanning. North is -Z, south is +Z.'
+                    ? 'When a TOPOGRAPHY block is present, prefer it for nearby terrain and water before scanning. North is -Z, south is +Z. For highest/lowest ground or area/direction questions, use its highest ground, highest by direction, and built lines, or !area_composition. !topography is a 1D line profile for bridges and roads, not an area search.'
                     : ''
             );
         }

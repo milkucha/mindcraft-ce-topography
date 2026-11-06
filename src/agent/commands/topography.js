@@ -135,6 +135,14 @@ function formatAreaComposition(data) {
         `- top blocks: ${formatBlockPairs(data.top_blocks)}.`,
         `- strong indicators: ${formatCountPairs(data.strong_indicators)}.`
     ];
+    if (Array.isArray(data.engineered_blocks) && data.engineered_blocks.length > 0)
+        lines.push(`- built: ${formatBlockPairs(data.engineered_blocks)}.`);
+    if (data.highest_ground && Number.isFinite(data.highest_ground.y)) {
+        const dx = data.highest_ground.x - data.center.x;
+        const dz = data.highest_ground.z - data.center.z;
+        const distance = Math.round(Math.hypot(dx, dz));
+        lines.push(`- highest ground: (${data.highest_ground.x},${data.highest_ground.z}) y=${formatHeight(data.highest_ground.y)}, ~${distance} blocks from center.`);
+    }
     if (data.missing_chunks)
         lines.push(`- missing chunks: ${data.missing_chunks} (not loaded from the save yet).`);
     return pad(lines.join('\n'));
@@ -193,7 +201,7 @@ function formatRecall(data) {
 export const topographyList = [
     {
         name: '!topography',
-        description: 'Get the surface height profile and materials along a line between two coordinates. Use before building bridges, roads, or foundations.',
+        description: 'Get a 1D surface height/material profile along a line between two coordinates. Use for bridges, roads, or foundations. For highest/lowest ground, area, or direction questions use the automatic TOPOGRAPHY block or !area_composition instead.',
         params: {
             'x1': { type: 'int', description: 'Start x coordinate.' },
             'z1': { type: 'int', description: 'Start z coordinate.' },
@@ -206,7 +214,7 @@ export const topographyList = [
     },
     {
         name: '!area_composition',
-        description: 'Get a block-composition histogram, dominant biome, and surface stats for an area around a coordinate.',
+        description: 'Get a 2D area summary around a coordinate: block composition, biome, surface stats, highest ground, and built/engineered blocks. Use for area, peak, or direction questions.',
         params: {
             'x': { type: 'int', description: 'Center x coordinate.' },
             'z': { type: 'int', description: 'Center z coordinate.' },
