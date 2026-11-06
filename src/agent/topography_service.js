@@ -5,8 +5,11 @@ const DEFAULT_SIZE_CHUNKS = 16;
 const DEFAULT_TIMEOUT_MS = 1500;
 const CACHE_TTL_MS = 1000;
 const MAX_BLOCK_CHARS = 1000;
+const PUSH_INTERVAL_MS = 2000;
 
 const cache = new Map();
+let lastPushKey = null;
+let lastPushAt = 0;
 
 export function getServiceUrl() {
     const configured = globalThis.process?.env?.TOPOGRAPHY_SERVICE_URL
@@ -17,6 +20,11 @@ export function getServiceUrl() {
 
 export function clearPerceptionCache() {
     cache.clear();
+}
+
+export function resetPushState() {
+    lastPushKey = null;
+    lastPushAt = 0;
 }
 
 function isEnabled(opts) {
@@ -249,5 +257,30 @@ export async function fetchPerception(agent, opts = {}) {
     } catch (error) {
         console.warn(`Topography perception unavailable: ${error?.message || error}`);
         return '';
+    }
+}
+
+export function pushPosition(agent, opts = {}) {
+    if (!isEnabled(opts))
+        return;
+    const position = resolvePosition(agent, opts);
+    if (!position)
+        return;
+    const size = opts.size ?? opts.size_chunks ?? settings.topography_render_chunks ?? DEFAULT_SIZE_CHUNKS;
+    const key = `${Math.floor(position.x / 16)},${Math.floor(position.z / 16)},${size}`;
+    const now = Date.now();
+    if (key === lastPushKey && now - lastPushAt < PUSH_INTERVAL_MS)
+        return;
+    lastPushKey = key;
+    lastPushAt = now;
+    const body = JSON.stringify({ x: position.x, z: position.z, size_chunks: size });
+    try {
+        fetch(`${getServiceUrl()}/position`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body
+        }).catch(() => {});
+    } catch {
+        // Fire-and-forget: a failed prefetch must never affect prompting.
     }
 }

@@ -5,7 +5,7 @@ import { SkillLibrary } from "../agent/library/skill_library.js";
 import { stringifyTurns } from '../utils/text.js';
 import { getCommand } from '../agent/commands/index.js';
 import settings from '../agent/settings.js';
-import { fetchPerception } from '../agent/topography_service.js';
+import { fetchPerception, pushPosition } from '../agent/topography_service.js';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -206,6 +206,8 @@ export class Prompter {
                 }
             }
             prompt = prompt.replaceAll('$TOPOGRAPHY', perception);
+            if (settings.topography_perception ?? true)
+                pushPosition(this.agent);
         }
 
         // check if there are any remaining placeholders with syntax $<word>

@@ -6,7 +6,9 @@ import {
     getServiceUrl,
     fetchPerception,
     formatPerception,
-    clearPerceptionCache
+    pushPosition,
+    clearPerceptionCache,
+    resetPushState
 } from '../src/agent/topography_service.js';
 import { Prompter } from '../src/models/prompter.js';
 
@@ -66,13 +68,32 @@ const perceptionFixture = {
 let server;
 let baseUrl;
 let requestCount;
+let positionCount;
+let lastPositionBody;
 let previousEnv;
 let previousUrlSetting;
 
 test.before(async () => {
     requestCount = 0;
+    positionCount = 0;
+    lastPositionBody = null;
     server = http.createServer((req, res) => {
         const url = new URL(req.url, 'http://127.0.0.1');
+        if (url.pathname === '/position') {
+            let raw = '';
+            req.on('data', chunk => { raw += chunk; });
+            req.on('end', () => {
+                positionCount += 1;
+                try {
+                    lastPositionBody = JSON.parse(raw || '{}');
+                } catch {
+                    lastPositionBody = null;
+                }
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ accepted: true, queued: 256 }));
+            });
+            return;
+        }
         if (url.pathname !== '/perception') {
             res.writeHead(404, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'unknown endpoint' }));
@@ -199,6 +220,42 @@ test('perception requests are cached for one second', async () => {
     assert.ok(first.length > 0);
     assert.equal(requestCount - before, 1);
     clearPerceptionCache();
+});
+
+test('pushPosition sends a fire-and-forget position and throttles repeats', async () => {
+    resetPushState();
+    const before = positionCount;
+    const agent = { bot: { entity: { position: { x: 120, y: 64, z: -46 } } } };
+    pushPosition(agent);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.equal(positionCount - before, 1);
+    assert.deepEqual(lastPositionBody, { x: 120, z: -46, size_chunks: 16 });
+
+    pushPosition(agent);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.equal(positionCount - before, 1);
+
+    const moved = { bot: { entity: { position: { x: 120 + 16 * 4, y: 64, z: -46 } } } };
+    pushPosition(moved);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.equal(positionCount - before, 2);
+});
+
+test('pushPosition does nothing when perception is disabled', async () => {
+    resetPushState();
+    const before = positionCount;
+    const saved = settings.topography_perception;
+    settings.topography_perception = false;
+    try {
+        pushPosition({ bot: { entity: { position: { x: 999, y: 64, z: 999 } } } });
+        await new Promise(resolve => setTimeout(resolve, 100));
+        assert.equal(positionCount, before);
+    } finally {
+        if (saved === undefined)
+            delete settings.topography_perception;
+        else
+            settings.topography_perception = saved;
+    }
 });
 
 test('replaceStrings injects the perception block into the prompt', async () => {
