@@ -3,6 +3,7 @@ import { actionsList } from './actions.js';
 import { queryList } from './queries.js';
 import { topographyList } from './topography.js';
 import settings from '../settings.js';
+import { terrainUnavailableMessage } from '../topography_service.js';
 
 let suppressNoDomainWarning = true;
 
@@ -13,7 +14,7 @@ for (let command of commandList) {
 }
 
 const TOPOGRAPHY_COMMANDS = new Set([
-    '!topography', '!area_composition', '!shoreline', '!recall'
+    '!topography', '!area_composition', '!shoreline', '!recall', '!flatAreas', '!bridgeSpan'
 ]);
 
 function topographyDisabled(agent) {
@@ -228,6 +229,11 @@ export async function executeCommand(agent, message) {
     else {
         if (topographyDisabled(agent) && TOPOGRAPHY_COMMANDS.has(parsed.commandName))
             return `Command ${parsed.commandName} is disabled for this agent.`;
+        if (TOPOGRAPHY_COMMANDS.has(parsed.commandName)) {
+            const unavailable = terrainUnavailableMessage(agent);
+            if (unavailable)
+                return unavailable;
+        }
         console.log('parsed command:', parsed);
         const command = getCommand(parsed.commandName);
         let numArgs = 0;

@@ -16,6 +16,7 @@ import { serverProxy, sendOutputToServer } from './mindserver_proxy.js';
 import settings from './settings.js';
 import { Task } from './tasks/tasks.js';
 import { speak } from './speak.js';
+import { pushPositionIfMoved } from './topography_service.js';
 import { log, validateNameFormat, handleDisconnection } from './connection_handler.js';
 
 export class Agent {
@@ -521,6 +522,7 @@ export class Agent {
     async update(delta) {
         if (!this.isIdle() || this.bot?.pathfinder?.isMoving?.())
             this.last_activity = Date.now();
+        pushPositionIfMoved(this);
         await this.bot.modes.update();
         this.self_prompter.update(delta);
         await this.checkTaskDone();
