@@ -5,6 +5,7 @@ import { SkillLibrary } from "../agent/library/skill_library.js";
 import { stringifyTurns } from '../utils/text.js';
 import { getCommand } from '../agent/commands/index.js';
 import settings from '../agent/settings.js';
+import { fetchPerception } from '../agent/topography_service.js';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -193,6 +194,18 @@ export class Prompter {
                 }
                 prompt = prompt.replaceAll('$BLUEPRINTS', blueprints.slice(0, -2));
             }
+        }
+        if (prompt.includes('$TOPOGRAPHY')) {
+            let perception = '';
+            if (settings.topography_perception ?? true) {
+                try {
+                    perception = await fetchPerception(this.agent);
+                } catch (error) {
+                    console.warn('Failed to build topography perception:', error);
+                    perception = '';
+                }
+            }
+            prompt = prompt.replaceAll('$TOPOGRAPHY', perception);
         }
 
         // check if there are any remaining placeholders with syntax $<word>
