@@ -1,4 +1,5 @@
 import settings from '../settings.js';
+import { planBridge } from '../library/bridge_plan.js';
 
 const DEFAULT_SERVICE_URL = 'http://127.0.0.1:8090';
 const REQUEST_TIMEOUT_MS = 5000;
@@ -108,14 +109,20 @@ function formatTopography(data) {
         const span = run.x1 === run.x2 && run.z1 === run.z2
             ? formatCoordinate(run.x1, run.z1)
             : `${formatCoordinate(run.x1, run.z1)}->${formatCoordinate(run.x2, run.z2)}`;
-        lines.push(`- ${span} y=${formatHeight(run.y)} ${formatName(run.material)} (${run.length})`);
+        let bed = '';
+        if (Number.isFinite(run.bed_min)) {
+            bed = run.bed_min === run.bed_max
+                ? ` bed y=${run.bed_min}`
+                : ` bed y=${run.bed_min}..${run.bed_max}`;
+        }
+        lines.push(`- ${span} y=${formatHeight(run.y)} ${formatName(run.material)} (${run.length})${bed}`);
     }
     if (runs.length > MAX_RUNS)
         lines.push(`- ... ${runs.length - MAX_RUNS} more runs omitted`);
     const transitions = data.transitions || [];
     if (transitions.length > 0) {
         const shown = transitions.slice(0, MAX_TRANSITIONS)
-            .map(t => `${formatCoordinate(t.x, t.z)} ${t.from}->${t.to}`);
+            .map(t => `${formatCoordinate(t.x, t.z)} ${t.from}->${t.to}${Number.isFinite(t.bed_y) ? ` (bed y=${t.bed_y})` : ''}`);
         if (transitions.length > MAX_TRANSITIONS)
             shown.push(`+${transitions.length - MAX_TRANSITIONS} more`);
         lines.push(`Shoreline crossings: ${shown.join(', ')}`);
@@ -198,6 +205,76 @@ function formatRecall(data) {
     return pad(lines.join('\n'));
 }
 
+const COMPASS = { north: 'N', south: 'S', east: 'E', west: 'W', northeast: 'NE', northwest: 'NW', southeast: 'SE', southwest: 'SW' };
+
+export function formatFlatAreas(data) {
+    const areas = data.areas || [];
+    const width = data.width;
+    const depth = data.depth;
+    const head = `FLAT_AREAS center=${formatCoordinate(data.center.x, data.center.z)} r=${data.radius} ${width}x${depth} max_delta=${data.max_delta}:`;
+    const lines = [];
+    if (areas.length === 0) {
+        lines.push(`${head} none found.`);
+        lines.push('- try a larger radius, a smaller footprint, or a higher max_delta (water, trees, and built ground are excluded).');
+    } else {
+        lines.push(`${head} ${areas.length} found.`);
+        for (const area of areas) {
+            const delta = area.y_max - area.y_min;
+            const dir = COMPASS[area.direction] || area.direction;
+            const water = area.water_columns ? `, ${area.water_columns} water` : '';
+            lines.push(`- ${formatCoordinate(area.x1, area.z1)}->${formatCoordinate(area.x2, area.z2)} y=${formatHeight(area.y_min)}${delta ? `..${area.y_max}` : ''} ${formatName(area.floor_material)}, ${Math.round(area.distance)} ${dir}${water}`);
+        }
+    }
+    if (data.missing_chunks)
+        lines.push(`- missing chunks: ${data.missing_chunks} (unloaded areas were skipped).`);
+    return pad(lines.join('\n'));
+}
+
+function dirVector(from, to) {
+    return { x: Math.sign(to.x - from.x), z: Math.sign(to.z - from.z) };
+}
+
+export function formatBridgeSpan(data) {
+    const start = formatCoordinate(data.start.x, data.start.z);
+    const via = data.dir || (data.target ? `to ${formatCoordinate(data.target.x, data.target.z)}` : '');
+    const cautions = Array.isArray(data.caution) ? data.caution : [];
+    const lines = [];
+    if (!data.span) {
+        lines.push(`BRIDGE_SPAN from ${start} ${via}: no water crossing found.`);
+    } else {
+        const depth = data.depth || {};
+        lines.push(`BRIDGE_SPAN from ${start} ${via}: ${data.span} water blocks at y=${formatHeight(data.water_y)}, bed y=${formatHeight(data.bed_y?.min)}..${formatHeight(data.bed_y?.max)} (depth ${formatHeight(depth.min)}..${formatHeight(depth.max)}, avg ${formatDecimal(depth.avg)}).`);
+        const near = data.near_shore;
+        const far = data.far_shore;
+        lines.push(`- near shore ${near ? `${formatCoordinate(near.x, near.z)} y=${formatHeight(near.y)}` : '?'}, far shore ${far ? `${formatCoordinate(far.x, far.z)} y=${formatHeight(far.y)}` : '?'}, deck y=${formatHeight(data.deck_y)}.`);
+        if (near && far && Array.isArray(data.water) && data.water.length > 0) {
+            const dir = dirVector(near, data.water[0]);
+            if (Math.abs(dir.x) + Math.abs(dir.z) === 1) {
+                const surfaces = new Map();
+                surfaces.set(`${near.x},${near.z}`, { y: near.y, water: false });
+                surfaces.set(`${far.x},${far.z}`, { y: far.y, water: false });
+                for (const column of data.water)
+                    surfaces.set(`${column.x},${column.z}`, { y: column.y, water: true });
+                const plan = planBridge({
+                    getSurface: (x, z) => surfaces.get(`${x},${z}`) || null,
+                    start: { x: near.x, z: near.z },
+                    dir,
+                    maxLength: data.water.length + 2
+                });
+                if (!plan.error) {
+                    const pillarColumns = new Set(plan.pillars.map(p => `${p.x},${p.z}`)).size;
+                    lines.push(`- plan: deck ${plan.length} blocks at y=${plan.deckY}, ${pillarColumns} pillars (every ~${plan.spacing}), ${plan.landings.length} landings, ${plan.stairs.length} stairs.`);
+                }
+            }
+        }
+    }
+    if (cautions.length > 0)
+        lines.push(`- caution: ${cautions.join('; ')}.`);
+    if (data.missing_chunks)
+        lines.push(`- missing chunks: ${data.missing_chunks}`);
+    return pad(lines.join('\n'));
+}
+
 export const topographyList = [
     {
         name: '!topography',
@@ -234,6 +311,32 @@ export const topographyList = [
         },
         perform: function (agent, x, z, radius) {
             return runQuery('/shoreline', { x, z, radius }, formatShoreline);
+        }
+    },
+    {
+        name: '!flatAreas',
+        description: 'Find flat, dry, tree-free rectangular building sites near a coordinate (up to 5, nearest first). Use before building a house or base.',
+        params: {
+            'x': { type: 'int', description: 'Center x coordinate.' },
+            'z': { type: 'int', description: 'Center z coordinate.' },
+            'radius': { type: 'int', description: 'Search radius in blocks.', domain: [1, 129, '[)'] },
+            'width': { type: 'int', description: 'Footprint size along x in blocks.', domain: [1, 65, '[)'] },
+            'depth': { type: 'int', description: 'Footprint size along z in blocks.', domain: [1, 65, '[)'] }
+        },
+        perform: function (agent, x, z, radius, width, depth) {
+            return runQuery('/flat_areas', { x, z, radius, width, depth }, formatFlatAreas);
+        }
+    },
+    {
+        name: '!bridgeSpan',
+        description: 'Scan from a shore coordinate in a compass direction and report the water crossing: near/far shore, water depth, bed height, safe deck y, and a pillar/landing plan. Use before building a bridge.',
+        params: {
+            'x': { type: 'int', description: 'Start x coordinate (on the near shore).' },
+            'z': { type: 'int', description: 'Start z coordinate (on the near shore).' },
+            'direction': { type: 'string', description: 'north, south, east or west.' }
+        },
+        perform: function (agent, x, z, direction) {
+            return runQuery('/bridge_span', { x, z, dir: String(direction || '').toLowerCase() }, formatBridgeSpan);
         }
     },
     {
