@@ -32,7 +32,7 @@ export function parseMemoryResponse(raw) {
         return { memory, facts, structured: true };
     }
     // salvage a truncated/garbled JSON blob: pull the memory string out if we can
-    const m = text.match(/"memory"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+    const m = text.match(/"memory"\s*:\s*"((?:[^"\\]|\\.)*)"?/);
     if (m) {
         let mem = m[1];
         try { mem = JSON.parse(`"${m[1]}"`); } catch { /* keep raw */ }

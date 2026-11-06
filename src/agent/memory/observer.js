@@ -66,7 +66,7 @@ export class ObservationWatcher {
             for (const s of inside) {
                 const existing = findObservedPlace(store, s.bbox);
                 if (existing) {
-                    const last = store.latestObservation(store.placeGroup(existing.id));
+                    const last = store.getObservations(store.placeGroup(existing.id), 50).find(o => o.digest?.via !== 'visit'); // surveys only
                     if (last && last.ts > now - resurveyMs) continue;
                 }
                 let survey = null;

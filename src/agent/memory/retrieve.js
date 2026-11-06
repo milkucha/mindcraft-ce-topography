@@ -14,15 +14,24 @@ export const DEFAULT_PLACES_CHARS = 150;
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const mentions = (text, name) => new RegExp(`(^|[^\\p{L}\\p{N}])${esc(name)}([^\\p{L}\\p{N}]|$)`, 'iu').test(text);
 
-const ASK = /(?:where(?:'s|\s+is|\s+are|\s+was)|who(?:'s|\s+is|\s+was)|(?:do|did|have)\s+you\s+(?:know|remember|heard|seen|been)(?:\s+(?:of|about|to))?|heard\s+of|know\s+(?:about|of)|(?:way|path|road|directions?|lead\s+me|take\s+me|guide\s+me|go|get|come|travel)\s+to|tell\s+me\s+about)\s+(?:the\s+|a\s+|an\s+|to\s+|about\s+|of\s+)*"?([A-Z][\p{L}\p{N}'_-]*(?:\s+[A-Z][\p{L}\p{N}'_-]*){0,2})"?/gu;
+const TRIGGER = /(?:where(?:'s|\s+is|\s+are|\s+was)?|who(?:'s|\s+is|\s+was)|(?:do|did|have)\s+you\s+(?:know|remember|heard|seen|been)(?:\s+(?:of|about|to))?|heard\s+of|know\s+(?:about|of)|(?:way|path|road|directions?|lead\s+me|take\s+me|guide\s+me|go|get|come|travel)\s+to|tell\s+me\s+about)\s+((?:the\s+|a\s+|an\s+|to\s+|about\s+|of\s+)*)"?([^\n?!.,;]*)/giu;
 
-/** Capitalised names the latest user message asks about. */
+/** Capitalised names the latest user message asks about ("where is Gorff", "take me to Oak Hollow"). */
 export function askedAbout(text, selfName = '') {
     const out = [];
-    for (const m of String(text ?? '').matchAll(ASK)) {
-        const term = m[1].trim();
+    const re = new RegExp(TRIGGER.source, TRIGGER.flags);
+    const src = String(text ?? '');
+    let m;
+    while ((m = re.exec(src)) !== null) {
+        re.lastIndex = m.index + 1; // overlapping triggers ("do you know where X")
+        const words = [];
+        for (const w of m[2].trim().split(/\s+/)) {
+            if (!/^\p{Lu}[\p{L}\p{N}'_-]*$/u.test(w) || words.length >= 3) break;
+            words.push(w);
+        }
+        const term = words.join(' ');
         const low = term.toLowerCase();
-        if (STOPWORDS.has(low) || low === String(selfName).toLowerCase()) continue;
+        if (!term || STOPWORDS.has(low) || low === String(selfName).toLowerCase()) continue;
         out.push(term);
     }
     return [...new Set(out)];
