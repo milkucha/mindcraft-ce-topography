@@ -573,12 +573,17 @@ export class Agent {
         this._idle_chat_pending = true;
         this.last_sender = target;
         const prompt =
-            `You have been idle for a while. Say one short, natural sentence to ${target}: ` +
-            `either comment on something you notice around you or ask a casual question. ` +
-            `Do not use commands. Do not give exact coordinates or distances. ` +
-            `Draw on your memory if useful.`;
+            `You are ${this.name}, chatting casually with ${target}. You have been idle for a while. ` +
+            `Say one short, natural sentence: comment on something you notice around you or ask a casual question. ` +
+            `Do not use commands. Do not claim you built, changed, or did anything. ` +
+            `Do not give exact coordinates or distances. Draw on your memory if useful.`;
         try {
-            await this.handleMessage('system', prompt, 1);
+            // Use a direct prompt with no recent action history, and never execute commands.
+            const response = await this.prompter.promptConvo([
+                { role: 'system', content: prompt }
+            ]);
+            if (response && !containsCommand(response))
+                this.openChat(response);
         } catch (error) {
             console.warn('Idle chat failed:', error?.message || error);
         } finally {
