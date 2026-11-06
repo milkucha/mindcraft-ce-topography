@@ -213,9 +213,6 @@ export class Agent {
         else if (init_message) {
             await this.handleMessage('system', init_message, 2);
         }
-        else {
-            this.openChat("Hello world! I am "+this.name);
-        }
     }
 
     checkAllPlayersPresent() {
