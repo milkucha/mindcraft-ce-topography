@@ -2,6 +2,7 @@ import { getBlockId, getItemId } from "../../utils/mcdata.js";
 import { actionsList } from './actions.js';
 import { queryList } from './queries.js';
 import { topographyList } from './topography.js';
+import settings from '../settings.js';
 
 let suppressNoDomainWarning = true;
 
@@ -9,6 +10,16 @@ const commandList = queryList.concat(topographyList, actionsList);
 const commandMap = {};
 for (let command of commandList) {
     commandMap[command.name] = command;
+}
+
+const TOPOGRAPHY_COMMANDS = new Set([
+    '!topography', '!area_composition', '!shoreline', '!recall'
+]);
+
+function topographyDisabled(agent) {
+    const profile = agent?.prompter?.profile;
+    const enabled = profile?.topography_enabled ?? settings.topography_enabled ?? true;
+    return enabled === false;
 }
 
 export function getCommand(name) {
@@ -215,6 +226,8 @@ export async function executeCommand(agent, message) {
     if (typeof parsed === 'string')
         return parsed; //The command was incorrectly formatted or an invalid input was given.
     else {
+        if (topographyDisabled(agent) && TOPOGRAPHY_COMMANDS.has(parsed.commandName))
+            return `Command ${parsed.commandName} is disabled for this agent.`;
         console.log('parsed command:', parsed);
         const command = getCommand(parsed.commandName);
         let numArgs = 0;
@@ -245,6 +258,9 @@ export function getCommandDocs(agent) {
     Use the commands with the syntax: !commandName or !commandName("arg1", 1.2, ...) if the command takes arguments.\n
     Do not use codeblocks. Use double quotes for strings. Only use one command in each response, trailing commands and comments will be ignored.\n`;
     for (let command of commandList) {
+        if (topographyDisabled(agent) && TOPOGRAPHY_COMMANDS.has(command.name)) {
+            continue;
+        }
         if (agent.blocked_actions.includes(command.name)) {
             continue;
         }

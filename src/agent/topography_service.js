@@ -30,6 +30,8 @@ export function resetPushState() {
 function isEnabled(opts) {
     if (opts.enabled !== undefined)
         return opts.enabled !== false;
+    if (settings.topography_enabled === false)
+        return false;
     return (settings.topography_perception ?? true) !== false;
 }
 
@@ -149,6 +151,7 @@ export function formatPerception(data) {
         ? `${cellSizes.length === 1 ? 'level' : 'levels'} ${cellSizes.join('/')} chunks per cell`
         : 'no LOD data';
     lines.push(`TOPOGRAPHY ${size}x${size} chunks centered at (${x},${z}), LOD ${lodLabel}`);
+    lines.push('compass: north=-Z, south=+Z, east=+X, west=-X; rows run north -> south');
 
     const heightLines = [];
     const waterLines = [];
@@ -235,34 +238,60 @@ async function requestPerception(url, timeoutMs) {
 }
 
 export async function fetchPerception(agent, opts = {}) {
-    if (!isEnabled(opts))
+    if (!isEnabled(opts)) {
+        if (opts.debug)
+            console.log('[topography] perception disabled for this agent');
         return '';
+    }
     const position = resolvePosition(agent, opts);
     if (!position)
         return '';
     const size = opts.size ?? opts.size_chunks ?? settings.topography_render_chunks ?? DEFAULT_SIZE_CHUNKS;
     const key = `${position.x},${position.z},${size}`;
     const cached = cache.get(key);
-    if (cached && cached.expiresAt > Date.now())
+    if (cached && cached.expiresAt > Date.now()) {
+        if (opts.debug)
+            console.log(`[topography] cache hit x=${position.x} z=${position.z} size=${size} chars=${cached.value.length}`);
         return cached.value;
+    }
     if (cached)
         cache.delete(key);
     const timeoutMs = opts.timeout_ms ?? opts.timeoutMs ?? settings.topography_perception_timeout_ms ?? DEFAULT_TIMEOUT_MS;
+    const url = buildUrl(position, opts);
+    const started = Date.now();
     try {
-        const data = await requestPerception(buildUrl(position, opts), timeoutMs);
+        const data = await requestPerception(url, timeoutMs);
         const formatted = formatPerception(data);
         if (formatted)
             cache.set(key, { value: formatted, expiresAt: Date.now() + CACHE_TTL_MS });
+        if (opts.debug) {
+            console.log(
+                `[topography] perception ok x=${position.x} z=${position.z} size=${size} ` +
+                `ms=${Date.now() - started} chars=${formatted.length} ` +
+                `missing=${data.missing_chunks} version=${data.window_version} url=${url}`
+            );
+        }
         return formatted;
     } catch (error) {
-        console.warn(`Topography perception unavailable: ${error?.message || error}`);
+        const message = error?.message || error;
+        if (opts.debug) {
+            console.warn(
+                `[topography] perception failed x=${position.x} z=${position.z} size=${size} ` +
+                `ms=${Date.now() - started} url=${url}: ${message}`
+            );
+        } else {
+            console.warn(`Topography perception unavailable: ${message}`);
+        }
         return '';
     }
 }
 
 export function pushPosition(agent, opts = {}) {
-    if (!isEnabled(opts))
+    if (!isEnabled(opts)) {
+        if (opts.debug)
+            console.log('[topography] position push disabled for this agent');
         return;
+    }
     const position = resolvePosition(agent, opts);
     if (!position)
         return;
@@ -274,13 +303,31 @@ export function pushPosition(agent, opts = {}) {
     lastPushKey = key;
     lastPushAt = now;
     const body = JSON.stringify({ x: position.x, z: position.z, size_chunks: size });
+    const url = `${getServiceUrl()}/position`;
     try {
-        fetch(`${getServiceUrl()}/position`, {
+        const request = fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body
-        }).catch(() => {});
-    } catch {
+        });
+        if (opts.debug) {
+            request.then(response => {
+                console.log(
+                    `[topography] position push x=${position.x} z=${position.z} size=${size} ` +
+                    `status=${response.status} url=${url}`
+                );
+            }).catch(error => {
+                console.warn(
+                    `[topography] position push failed x=${position.x} z=${position.z} size=${size} ` +
+                    `url=${url}: ${error?.message || error}`
+                );
+            });
+        } else {
+            request.catch(() => {});
+        }
+    } catch (error) {
+        if (opts.debug)
+            console.warn(`[topography] position push error: ${error?.message || error}`);
         // Fire-and-forget: a failed prefetch must never affect prompting.
     }
 }

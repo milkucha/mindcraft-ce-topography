@@ -195,19 +195,30 @@ export class Prompter {
                 prompt = prompt.replaceAll('$BLUEPRINTS', blueprints.slice(0, -2));
             }
         }
+        const topographyEnabled = this.profile?.topography_enabled ?? settings.topography_enabled ?? true;
+        const perceptionEnabled = topographyEnabled && (this.profile?.topography_perception ?? settings.topography_perception ?? true);
+        const topographyDebug = this.profile?.topography_debug ?? settings.topography_debug ?? false;
         if (prompt.includes('$TOPOGRAPHY')) {
             let perception = '';
-            if (settings.topography_perception ?? true) {
+            if (perceptionEnabled) {
                 try {
-                    perception = await fetchPerception(this.agent);
+                    perception = await fetchPerception(this.agent, { enabled: perceptionEnabled, debug: topographyDebug });
                 } catch (error) {
                     console.warn('Failed to build topography perception:', error);
                     perception = '';
                 }
             }
             prompt = prompt.replaceAll('$TOPOGRAPHY', perception);
-            if (settings.topography_perception ?? true)
-                pushPosition(this.agent);
+            if (perceptionEnabled)
+                pushPosition(this.agent, { enabled: perceptionEnabled, debug: topographyDebug });
+        }
+        if (prompt.includes('$TOPO_GUIDE')) {
+            prompt = prompt.replaceAll(
+                '$TOPO_GUIDE',
+                perceptionEnabled
+                    ? 'When a TOPOGRAPHY block is present, prefer it for nearby terrain and water before scanning. North is -Z, south is +Z.'
+                    : ''
+            );
         }
 
         // check if there are any remaining placeholders with syntax $<word>

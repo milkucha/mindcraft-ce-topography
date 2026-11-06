@@ -11,6 +11,7 @@ import {
     resetPushState
 } from '../src/agent/topography_service.js';
 import { Prompter } from '../src/models/prompter.js';
+import { getCommandDocs, executeCommand } from '../src/agent/commands/index.js';
 
 const perceptionFixture = {
     service: 'topography',
@@ -167,6 +168,7 @@ test('getServiceUrl prefers env, then settings, then the default', () => {
 test('formatPerception renders a compact LOD block within budget', () => {
     const block = formatPerception(perceptionFixture);
     assert.match(block, /^TOPOGRAPHY 16x16 chunks centered at \(120,-46\), LOD levels 1\/2\/4 chunks per cell/);
+    assert.match(block, /compass: north=-Z, south=\+Z, east=\+X, west=-X/);
     assert.match(block, /heights \(NW->SE, y\):/);
     assert.match(block, /inner 1ch\/cell: 64 65 66 67 \/ 65 66 66 67/);
     assert.match(block, /ring 2ch\/cell: 64 65 67 68/);
@@ -209,6 +211,68 @@ test('disabled perception returns an empty string', async () => {
         else
             settings.topography_perception = saved;
     }
+});
+
+test('a profile can override the global perception setting', async () => {
+    clearPerceptionCache();
+    const agent = { bot: { entity: { position: { x: 300, y: 64, z: 300 } } } };
+    const prompter = Object.create(Prompter.prototype);
+    prompter.agent = agent;
+    const saved = settings.topography_perception;
+    try {
+        settings.topography_perception = true;
+        prompter.profile = { topography_perception: false };
+        assert.equal(await prompter.replaceStrings('$TOPOGRAPHY', []), '');
+
+        clearPerceptionCache();
+        settings.topography_perception = false;
+        prompter.profile = { topography_perception: true };
+        const enabled = await prompter.replaceStrings('$TOPOGRAPHY', []);
+        assert.match(enabled, /^TOPOGRAPHY/);
+    } finally {
+        if (saved === undefined)
+            delete settings.topography_perception;
+        else
+            settings.topography_perception = saved;
+    }
+});
+
+test('topography_enabled false removes the block, docs, and commands', async () => {
+    clearPerceptionCache();
+    const profile = { topography_enabled: false };
+    const agent = {
+        bot: { entity: { position: { x: 10, y: 64, z: 10 } } },
+        blocked_actions: [],
+        prompter: { profile }
+    };
+    const prompter = Object.create(Prompter.prototype);
+    prompter.agent = agent;
+    prompter.profile = profile;
+
+    assert.equal(await prompter.replaceStrings('$TOPOGRAPHY', []), '');
+
+    const docs = getCommandDocs(agent);
+    assert.doesNotMatch(docs, /!topography:/);
+    assert.doesNotMatch(docs, /!area_composition:/);
+    assert.doesNotMatch(docs, /!shoreline:/);
+    assert.doesNotMatch(docs, /!recall:/);
+
+    const enabledDocs = getCommandDocs({ blocked_actions: [], prompter: { profile: {} } });
+    assert.match(enabledDocs, /!topography:/);
+
+    const result = await executeCommand(agent, '!topography(0,0,1,0)');
+    assert.match(result, /disabled/);
+
+    const enabledProfile = {};
+    const enabledPrompter = Object.create(Prompter.prototype);
+    enabledPrompter.agent = {
+        bot: { entity: { position: { x: 10, y: 64, z: 10 } } },
+        blocked_actions: [],
+        prompter: { profile: enabledProfile }
+    };
+    enabledPrompter.profile = enabledProfile;
+    assert.match(await enabledPrompter.replaceStrings('$TOPO_GUIDE', []), /North is -Z/);
+    assert.equal(await prompter.replaceStrings('$TOPO_GUIDE', []), '');
 });
 
 test('perception requests are cached for one second', async () => {
