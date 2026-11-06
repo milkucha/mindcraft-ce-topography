@@ -40,10 +40,18 @@ export const actionsList = [
             }
             let result = "";
             const actionFn = async () => {
+                const noticeMs = Number(settings.long_task_notice_ms ?? 12000);
+                const noticeEnabled = settings.long_task_notice ?? true;
+                const timer = noticeEnabled && Number.isFinite(noticeMs) && noticeMs > 0
+                    ? setTimeout(() => agent.openChat("Still working on this — it's taking a while."), noticeMs)
+                    : null;
                 try {
                     result = await agent.coder.generateCode(agent.history);
                 } catch (e) {
                     result = 'Error generating code: ' + e.toString();
+                } finally {
+                    if (timer)
+                        clearTimeout(timer);
                 }
             };
             await agent.actions.runAction('action:newAction', actionFn, {timeout: settings.code_timeout_mins});
