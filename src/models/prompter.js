@@ -5,7 +5,7 @@ import { SkillLibrary } from "../agent/library/skill_library.js";
 import { stringifyTurns } from '../utils/text.js';
 import { getCommand } from '../agent/commands/index.js';
 import settings from '../agent/settings.js';
-import { fetchPerception, pushPosition } from '../agent/topography_service.js';
+import { fetchPerception, pushPosition, isOverworld } from '../agent/topography_service.js';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -215,7 +215,7 @@ export class Prompter {
         if (prompt.includes('$TOPO_GUIDE')) {
             prompt = prompt.replaceAll(
                 '$TOPO_GUIDE',
-                perceptionEnabled
+                perceptionEnabled && isOverworld(this.agent)
                     ? 'When a TOPOGRAPHY block is present, prefer it for nearby terrain and water before scanning. North is -Z, south is +Z. For highest/lowest ground or area/direction questions, use its highest ground, highest by direction, and built lines, or !area_composition. !topography is a 1D line profile for bridges and roads, not an area search.'
                     : ''
             );

@@ -27,6 +27,47 @@ export function resetPushState() {
     lastPushAt = 0;
 }
 
+const AIR_NAMES = new Set(['air', 'cave_air', 'void_air']);
+
+/** Normalise `overworld`, `minecraft:overworld`, `the_nether`, ... to `minecraft:<name>`. */
+export function normalizeDimension(value) {
+    if (value === undefined || value === null)
+        return null;
+    let raw = String(value).trim().toLowerCase();
+    if (!raw)
+        return null;
+    if (!raw.includes(':'))
+        raw = `minecraft:${raw}`;
+    if (raw === 'minecraft:nether')
+        raw = 'minecraft:the_nether';
+    if (raw === 'minecraft:end')
+        raw = 'minecraft:the_end';
+    if (raw === 'minecraft:the_overworld' || raw === 'minecraft:world')
+        raw = 'minecraft:overworld';
+    return raw;
+}
+
+/** The bot's current dimension id, or null when unknown. */
+export function getDimension(agent) {
+    return normalizeDimension(agent?.bot?.game?.dimension);
+}
+
+/** Unknown dimension is treated as overworld (older servers / not yet spawned). */
+export function isOverworld(agent) {
+    const dimension = getDimension(agent);
+    return dimension === null || dimension === 'minecraft:overworld';
+}
+
+/**
+ * Guard for terrain commands: returns a message to return to the LLM instead of
+ * calling the service when the bot is outside the overworld, else null.
+ */
+export function terrainUnavailableMessage(agent) {
+    if (isOverworld(agent))
+        return null;
+    return `Terrain data is only available in the overworld (you are in ${getDimension(agent)}).`;
+}
+
 function isEnabled(opts) {
     if (opts.enabled !== undefined)
         return opts.enabled !== false;
@@ -105,6 +146,26 @@ function formatLevelLabel(level, index) {
     return `${index === 0 ? 'inner' : 'ring'} ${chunks}ch/cell`;
 }
 
+function isAirName(name) {
+    return AIR_NAMES.has(String(name).replace(/^minecraft:/, ''));
+}
+
+function largestRemainderPercents(values, total) {
+    const exact = values.map(value => (100 * value) / total);
+    const floors = exact.map(Math.floor);
+    let remaining = 100 - floors.reduce((a, b) => a + b, 0);
+    const order = exact
+        .map((value, index) => ({ index, frac: value - Math.floor(value) }))
+        .sort((a, b) => b.frac - a.frac);
+    for (const { index } of order) {
+        if (remaining <= 0)
+            break;
+        floors[index] += 1;
+        remaining -= 1;
+    }
+    return floors;
+}
+
 function formatComposition(composition) {
     if (!composition || typeof composition !== 'object')
         return null;
@@ -112,15 +173,16 @@ function formatComposition(composition) {
     const natural = Number(composition.natural) || 0;
     const engineered = Number(composition.engineered) || 0;
     const liquid = Number(composition.liquid) || 0;
-    const air = Number(composition.air) || 0;
-    const total = natural + engineered + liquid + air;
+    // Air is not shown, so percentages are over the shown categories and sum to 100.
+    const shown = [natural, engineered, liquid];
+    const total = shown.reduce((a, b) => a + b, 0);
     if (total > 0) {
-        const percent = value => Math.round((100 * value) / total);
-        parts.push(`natural ${percent(natural)}%, engineered ${percent(engineered)}%, water ${percent(liquid)}%`);
+        const [pn, pe, pl] = largestRemainderPercents(shown, total);
+        parts.push(`natural ${pn}%, engineered ${pe}%, water ${pl}%`);
     }
     const topBlocks = Array.isArray(composition.top_blocks) ? composition.top_blocks : [];
     const top = topBlocks
-        .filter(pair => Array.isArray(pair) && pair[0] && (!Number.isFinite(pair[1]) || pair[1] > 0))
+        .filter(pair => Array.isArray(pair) && pair[0] && !isAirName(pair[0]) && (!Number.isFinite(pair[1]) || pair[1] > 0))
         .slice(0, 3)
         .map(pair => formatName(pair[0]));
     if (top.length > 0)
@@ -149,6 +211,8 @@ function truncateBlock(block) {
 export function formatPerception(data) {
     if (!data || typeof data !== 'object')
         return '';
+    if (data.unavailable)
+        return ''; // e.g. {"unavailable": "dimension"}: inject nothing
     const center = data.center || {};
     const x = Number.isFinite(center.x) ? Math.floor(center.x) : 0;
     const z = Number.isFinite(center.z) ? Math.floor(center.z) : 0;
@@ -234,10 +298,12 @@ export function formatPerception(data) {
     return truncateBlock(lines.join('\n'));
 }
 
-function buildUrl(position, opts) {
+function buildUrl(position, opts, dimension) {
     const search = new URLSearchParams();
     search.set('x', String(position.x));
     search.set('z', String(position.z));
+    if (dimension)
+        search.set('dimension', dimension);
     const size = opts.size ?? opts.size_chunks ?? settings.topography_render_chunks ?? DEFAULT_SIZE_CHUNKS;
     search.set('size_chunks', String(size));
     const materials = opts.materials ?? settings.topography_perception_materials ?? false;
@@ -279,7 +345,13 @@ export async function fetchPerception(agent, opts = {}) {
     if (!position)
         return '';
     const size = opts.size ?? opts.size_chunks ?? settings.topography_render_chunks ?? DEFAULT_SIZE_CHUNKS;
-    const key = `${position.x},${position.z},${size}`;
+    const dimension = getDimension(agent);
+    if (!isOverworld(agent)) {
+        if (opts.debug)
+            console.log(`[topography] perception skipped: dimension ${dimension}`);
+        return '';
+    }
+    const key = `${position.x},${position.z},${size},${dimension || ''}`;
     const cached = cache.get(key);
     if (cached && cached.expiresAt > Date.now()) {
         if (opts.debug)
@@ -289,7 +361,7 @@ export async function fetchPerception(agent, opts = {}) {
     if (cached)
         cache.delete(key);
     const timeoutMs = opts.timeout_ms ?? opts.timeoutMs ?? settings.topography_perception_timeout_ms ?? DEFAULT_TIMEOUT_MS;
-    const url = buildUrl(position, opts);
+    const url = buildUrl(position, opts, dimension);
     const started = Date.now();
     try {
         const data = await requestPerception(url, timeoutMs);
@@ -324,9 +396,12 @@ export function pushPosition(agent, opts = {}) {
             console.log('[topography] position push disabled for this agent');
         return;
     }
+    if (!isOverworld(agent))
+        return;
     const position = resolvePosition(agent, opts);
     if (!position)
         return;
+    const dimension = getDimension(agent);
     const size = opts.size ?? opts.size_chunks ?? settings.topography_render_chunks ?? DEFAULT_SIZE_CHUNKS;
     const key = `${Math.floor(position.x / 16)},${Math.floor(position.z / 16)},${size}`;
     const now = Date.now();
@@ -334,7 +409,10 @@ export function pushPosition(agent, opts = {}) {
         return;
     lastPushKey = key;
     lastPushAt = now;
-    const body = JSON.stringify({ x: position.x, z: position.z, size_chunks: size });
+    const payload = { x: position.x, z: position.z, size_chunks: size };
+    if (dimension)
+        payload.dimension = dimension;
+    const body = JSON.stringify(payload);
     const url = `${getServiceUrl()}/position`;
     try {
         const request = fetch(url, {
@@ -362,4 +440,21 @@ export function pushPosition(agent, opts = {}) {
             console.warn(`[topography] position push error: ${error?.message || error}`);
         // Fire-and-forget: a failed prefetch must never affect prompting.
     }
+}
+
+/**
+ * Push the bot's position if it has changed chunk tile (pushPosition debounces
+ * duplicates to one request per tile per ~2 s). Cheap enough to call from the
+ * agent update tick so the service prefetches while the bot walks, not only when
+ * a prompt is built. Reads the per-profile topography settings from the prompter.
+ */
+export function pushPositionIfMoved(agent, opts = {}) {
+    const profile = agent?.prompter?.profile;
+    const master = profile?.topography_enabled ?? settings.topography_enabled ?? true;
+    const perception = master && (profile?.topography_perception ?? settings.topography_perception ?? true);
+    pushPosition(agent, {
+        enabled: opts.enabled ?? perception,
+        debug: opts.debug ?? profile?.topography_debug ?? settings.topography_debug ?? false,
+        ...opts
+    });
 }

@@ -10,6 +10,51 @@ function isTransientTerrain(turn) {
 }
 
 
+// Live (not yet saved/summarized) terrain results go stale quickly. Each one is stubbed
+// once the model has had its next turn, or once the bot has moved this far from where
+// the result was produced.
+const STALE_DISTANCE = 16;
+const terrainMeta = new WeakMap(); // turn object -> { x, z } where it was produced
+
+function terrainStub(turn) {
+    const match = (turn.content || '').trim().match(TRANSIENT_TERRAIN_PATTERN);
+    const kind = match ? match[1] : 'terrain';
+    return `[earlier ${kind} result omitted — re-run the command if needed]`;
+}
+
+/**
+ * Replace transient terrain system turns in `turns` (in place) with one-line stubs.
+ * `opts.all` stubs every one; otherwise only those produced more than STALE_DISTANCE
+ * blocks from `opts.position`. Returns the number replaced.
+ */
+export function compactStaleTerrain(turns, opts = {}) {
+    let replaced = 0;
+    for (const turn of turns) {
+        if (!isTransientTerrain(turn))
+            continue;
+        let stale = opts.all === true;
+        if (!stale && opts.position) {
+            const origin = terrainMeta.get(turn);
+            if (origin) {
+                const dx = opts.position.x - origin.x;
+                const dz = opts.position.z - origin.z;
+                stale = Math.hypot(dx, dz) > STALE_DISTANCE;
+            }
+        }
+        if (!stale)
+            continue;
+        turn.content = terrainStub(turn);
+        terrainMeta.delete(turn);
+        replaced++;
+    }
+    return replaced;
+}
+
+function botPosition(agent) {
+    const p = agent?.bot?.entity?.position;
+    return Number.isFinite(p?.x) && Number.isFinite(p?.z) ? { x: p.x, z: p.z } : null;
+}
+
 export class History {
     constructor(agent) {
         this.agent = agent;
@@ -75,7 +120,18 @@ export class History {
             role = 'user';
             content = `${name}: ${content}`;
         }
-        this.turns.push({role, content});
+        const turn = {role, content};
+        // A new assistant turn means the model has already seen earlier terrain results.
+        if (role === 'assistant')
+            compactStaleTerrain(this.turns, { all: true });
+        const position = botPosition(this.agent);
+        if (position) {
+            if (isTransientTerrain(turn))
+                terrainMeta.set(turn, position);
+            else
+                compactStaleTerrain(this.turns, { position });
+        }
+        this.turns.push(turn);
 
         if (this.turns.length >= this.max_messages) {
             let chunk = this.turns.splice(0, this.summary_chunk_size);
