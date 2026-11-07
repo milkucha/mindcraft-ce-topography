@@ -212,6 +212,31 @@ function formatComposition(composition) {
     return parts.length > 0 ? parts.join('; ') : null;
 }
 
+const MIN_SETTLEMENT_CONFIDENCE = 0.3;
+const SETTLEMENTS_TIMEOUT_MS = 400;
+
+/**
+ * One line about built-up places from /settlements: the one the bot is inside, else the nearest.
+ * Without it the block only says "engineered 0%" for a village that is a speck in a 256x256 window.
+ */
+export function formatSettlementLine(settlements) {
+    if (!Array.isArray(settlements))
+        return '';
+    const usable = settlements.filter(s => s && s.center && (s.confidence === undefined || s.confidence >= MIN_SETTLEMENT_CONFIDENCE));
+    if (usable.length === 0)
+        return '';
+    const pick = usable.find(s => s.inside) ?? [...usable].sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity))[0];
+    const kind = pick.kind === 'outpost' ? 'outpost' : 'settlement';
+    const buildings = Number.isFinite(pick.building_count) ? `${pick.building_count} buildings` : 'buildings';
+    const weak = Number.isFinite(pick.confidence) && pick.confidence < 0.5 ? ' (weak signal)' : '';
+    const where = Number.isFinite(pick.distance) && pick.direction
+        ? `${Math.round(pick.distance)} blocks ${pick.direction}`
+        : `(${Math.round(pick.center.x)},${Math.round(pick.center.z)})`;
+    if (pick.inside)
+        return `${kind}: you are inside one (${buildings}; centre ${where})${weak}`;
+    return `${kind}: nearest is ${where} (${buildings})${weak}`;
+}
+
 function truncateBlock(block) {
     if (block.length <= MAX_BLOCK_CHARS)
         return block;
@@ -268,6 +293,10 @@ export function formatPerception(data) {
             lines.push(`nearest water: none; center: ${centerLabel}`);
         }
     }
+
+    const settlementLine = formatSettlementLine(data.settlements_nearby);
+    if (settlementLine)
+        lines.push(settlementLine); // early on purpose: the block is truncated from the end
 
     const surface = data.surface || {};
     const relief = Number.isFinite(surface.relief)
@@ -327,6 +356,18 @@ function buildUrl(position, opts, dimension, agentName = null) {
     return `${getServiceUrl()}/perception?${search.toString()}`;
 }
 
+function buildSettlementsUrl(position, dimension, agentName = null) {
+    const search = new URLSearchParams();
+    if (agentName)
+        search.set('agent', agentName);
+    search.set('x', String(position.x));
+    search.set('z', String(position.z));
+    search.set('radius', '96');
+    if (dimension)
+        search.set('dimension', dimension);
+    return `${getServiceUrl()}/settlements?${search.toString()}`;
+}
+
 async function requestPerception(url, timeoutMs) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -380,6 +421,14 @@ export async function fetchPerception(agent, opts = {}) {
     const started = Date.now();
     try {
         const data = await requestPerception(url, timeoutMs);
+        if (!data.unavailable) {
+            // Settlements ride along in the same block. Optional: a short timeout, and any failure just leaves the line out.
+            const settlements = await requestPerception(
+                buildSettlementsUrl(position, dimension, terrainAgentName(agent)), Math.min(timeoutMs, SETTLEMENTS_TIMEOUT_MS)
+            ).catch(() => null);
+            if (Array.isArray(settlements?.settlements) && settlements.settlements.length > 0)
+                data.settlements_nearby = settlements.settlements;
+        }
         const formatted = formatPerception(data);
         if (formatted)
             cache.set(key, { value: formatted, expiresAt: Date.now() + CACHE_TTL_MS });

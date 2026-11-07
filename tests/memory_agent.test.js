@@ -276,12 +276,13 @@ test('terrain requests carry agent=<name> unless topography_seen_only is false; 
         clearPerceptionCache();
         const agent = fakeAgent();
         const text = await fetchPerception(agent, { enabled: true });
-        assert.match(svc.requests[0].url, /agent=Bot/);
+        const perceptionRequests = () => svc.requests.filter(r => r.url.startsWith('/perception'));
+        assert.match(perceptionRequests()[0].url, /agent=Bot/);
         assert.match(text, /unexplored: 7 chunks/);
         clearPerceptionCache();
         agent.prompter.profile.topography_seen_only = false;
         await fetchPerception(agent, { enabled: true });
-        assert.ok(!/agent=/.test(svc.requests[1].url));
+        assert.ok(!/agent=/.test(perceptionRequests()[1].url));
         assert.equal(terrainAgentName(agent), null);
         assert.match(formatPerception({ center: { x: 0, z: 0 }, unexplored_chunks: 2 }), /unexplored: 2 chunks/);
         // terrain commands (separate code path)
