@@ -5,7 +5,7 @@
  * confidence from the distance; a link is made by a deliberate act (confirmLink / !confirmPlace) or by an
  * observation whose bbox clearly contains the told point.
  */
-import { refreshPlace, belief, locOf, placeClaims, visitInfo } from './beliefs.js';
+import { refreshPlace, belief, locOf, placeClaims, visitInfo, placeStatus } from './beliefs.js';
 import { dist, distToBbox, bboxOverlap, direction } from './util.js';
 
 export const LINK_RADIUS = 96;
@@ -80,21 +80,56 @@ function exactPlace(store, name) {
  * Record a named location claim. source: {kind:'told'|'observed'|'inferred', name, event_id, derived_from}.
  * Same-name claims attach to the same named place (they are competing claims about one name).
  */
-export function recordPlaceClaim(store, { name, x, z, y = null, radius = 32, source, ts = Date.now(), day = null }) {
+export function recordPlaceClaim(store, { name, x = null, z = null, y = null, radius = 32, source, nameSource = null, ts = Date.now(), day = null }) {
+    // x/z are optional: someone can name a place without saying where it is, and we must not invent a position.
+    // nameSource lets the name be "told" while the location comes from somewhere else (e.g. the bot's own position).
+    const hasLoc = Number.isFinite(x) && Number.isFinite(z);
     let place = exactPlace(store, name);
     if (!place) {
-        const id = store.createPlace({ name, kind: 'place', cx: x, cz: z, radius, ts });
+        const id = store.createPlace({ name, kind: 'place', cx: hasLoc ? x : null, cz: hasLoc ? z : null, radius: hasLoc ? radius : null, ts });
         place = store.getPlace(id);
     }
-    const base = { subject_type: 'place', subject_id: place.id, source_kind: source.kind, source_name: source.name ?? null, ts, day, event_id: source.event_id ?? null, derived_from: source.derived_from ?? null };
-    addClaim(store, { ...base, predicate: 'name', value: name });
-    const value = { x, z, r: radius }; if (y !== null && y !== undefined) value.y = y;
-    addClaim(store, { ...base, predicate: 'location', value });
-    if (source.kind === 'observed')
-        store.addObservation({ place_id: place.id, ts, day, pos: { x, z }, digest: { via: 'visit', note: 'was there when it was recorded' } });
+    const fields = (s) => ({ source_kind: s.kind, source_name: s.name ?? null, event_id: s.event_id ?? null, derived_from: s.derived_from ?? null });
+    const base = { subject_type: 'place', subject_id: place.id, ts, day };
+    addClaim(store, { ...base, ...fields(nameSource ?? source), predicate: 'name', value: name });
+    if (hasLoc) {
+        const value = { x, z, r: radius }; if (y !== null && y !== undefined) value.y = y;
+        addClaim(store, { ...base, ...fields(source), predicate: 'location', value });
+        if (source.kind === 'observed')
+            store.addObservation({ place_id: place.id, ts, day, pos: { x, z }, digest: { via: 'visit', note: 'was there when it was recorded' } });
+    }
     refreshPlace(store, place.id);
-    relink(store, place.id, ts);
+    if (hasLoc) relink(store, place.id, ts);
     return place.id;
+}
+
+export const PLACE_STATES = new Set(['gone', 'exists', 'no_location']);
+
+/**
+ * Record a correction about a place that is already known: it is gone, it exists after all, or it has no
+ * location. Claims are never deleted. A told "no_location" ends the told/inferred location claims (they are
+ * superseded by the status claim); a location the bot saw itself is kept and surfaced as a conflict, because
+ * observed beats told. Returns { placeId, state, keptObserved } or null for an unknown place/state.
+ */
+export function markPlaceStatus(store, { name, state, source, ts = Date.now(), day = null }) {
+    if (!PLACE_STATES.has(state)) return null;
+    const place = store.findPlacesByName(name)[0];
+    if (!place) return null;
+    const placeId = store.resolvePlace(place.id) ?? place.id;
+    const claimId = addClaim(store, {
+        subject_type: 'place', subject_id: placeId, predicate: 'status', value: state,
+        source_kind: source.kind, source_name: source.name ?? null, ts, day,
+        event_id: source.event_id ?? null, derived_from: source.derived_from ?? null,
+    });
+    let keptObserved = false;
+    if (state === 'no_location') {
+        for (const c of placeClaims(store, placeId, 'location')) {
+            if (c.source_kind === 'observed' && source.kind !== 'observed') { keptObserved = true; continue; }
+            store.supersedeClaim(c.id, claimId, ts);
+        }
+    }
+    refreshPlace(store, placeId);
+    return { placeId, state, keptObserved };
 }
 
 export function recordPlaceFact(store, { name, predicate, value, source, ts = Date.now(), day = null }) {
@@ -151,10 +186,11 @@ export function recordObservation(store, { settlement, survey = null, botPos = n
 }
 
 /** Nearest known places with a centre: [{place, d, dir}] */
-export function nearestPlaces(store, x, z, n = 5) {
+export function nearestPlaces(store, x, z, n = 5, { includeGone = false } = {}) {
     const out = [];
     for (const p of store.listPlaces()) {
         if (!Number.isFinite(p.cx)) continue;
+        if (!includeGone && placeStatus(store, p.id)?.state === 'gone') continue; // a place that no longer exists is not "nearby"
         out.push({ place: p, d: dist(x, z, p.cx, p.cz), dir: direction(x, z, p.cx, p.cz) });
     }
     out.sort((a, b) => a.d - b.d);

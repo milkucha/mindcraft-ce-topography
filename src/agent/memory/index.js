@@ -7,13 +7,19 @@ import { openStore } from './store.js';
 import { cfg, ObservationWatcher } from './observer.js';
 import { SeenReporter } from './seen.js';
 import { retrieve, placesLine, placeLine, askedAbout, turnText, DEFAULT_RECALL_CHARS, DEFAULT_PLACES_CHARS } from './retrieve.js';
-import { recordPlaceClaim, confirmLink, lookupLocation, nearestPlaces } from './ops.js';
-import { renderPerson, renderGeneral, placeDisplayName, visitInfo, when } from './beliefs.js';
+import { recordPlaceClaim, markPlaceStatus, confirmLink, lookupLocation, nearestPlaces } from './ops.js';
+import { renderPerson, renderGeneral, placeDisplayName, placeStatus, visitInfo, when } from './beliefs.js';
 import { describeTurns, ingestFacts } from './extract.js';
-import { clip, dist, direction } from './util.js';
+import { clip, dist, direction, mentionsName } from './util.js';
 
 const TRANSIENT = /^(?:SYSTEM:\s*)?(TOPOGRAPHY|SHORELINE|AREA_COMPOSITION|RECALL|CHUNK|\[earlier )/;
 export const NEAR_ENOUGH_TO_OBSERVE = 48;
+
+// "the village we're in is X", "this place is called X": the speaker means where the bot is standing.
+const DEICTIC = /\b(?:here|this (?:place|spot|village|town|area|location)|we(?:'re| are| were) (?:in|at|on|standing)|where we (?:are|were))\b/i;
+// Corrections said about a known place. Deliberately narrow: they only fire when the message names the place.
+const GONE_CUE = /\b(?:is|was|are|were|has been|got|been)\s+(?:now\s+|accidentally\s+)?(?:gone|destroyed|demolished|removed|deleted|burn(?:ed|t) down|torn down)\b|\bno longer (?:exists?|there|standing)\b|\b(?:doesn't|does not) exist (?:any ?more|now)\b/i;
+const NO_LOCATION_CUE = /\b(?:no|not any)\s+(?:known\s+)?(?:coordinates?|location|position)\b|\bnot in this world\b|\b(?:has|have) no (?:coordinates?|location)\b|\b(?:doesn't|does not) have (?:a |any )?(?:coordinates?|location)\b/i;
 
 export class MemoryManager {
     static create(agent, { path = null, backend = 'auto' } = {}) {
@@ -78,7 +84,10 @@ export class MemoryManager {
             if (!e || !e.text.trim()) return null;
             const id = this.store.appendEvent({ ...e, ts: Date.now(), day: this.day(), pos: this.pos() });
             this.logged.set(turn, id);
-            if (e.kind === 'heard') this.store.touchPerson(e.speaker);
+            if (e.kind === 'heard') {
+                this.store.touchPerson(e.speaker);
+                this._applySpokenCorrection(e, id);
+            }
             return id;
         }, null);
     }
@@ -113,21 +122,84 @@ export class MemoryManager {
         }, 0);
     }
 
+    /** "X is gone" / "X has no coordinates", said about a place we know by name -> a status claim, never a deletion. */
+    _applySpokenCorrection(e, eventId) {
+        try {
+            const text = String(e.text ?? '').trim();
+            if (!text || /\?\s*$/.test(text)) return; // a question is not a correction
+            // the place and the cue must be in the same clause ("my gold is gone but Oak Hollow is fine" says nothing about Oak Hollow)
+            const names = this.store.placeNames().map(p => p.name).filter(Boolean);
+            for (const clause of text.split(/[.;!?,]|\bbut\b/i)) {
+                const state = GONE_CUE.test(clause) ? 'gone' : NO_LOCATION_CUE.test(clause) ? 'no_location' : null;
+                if (!state) continue;
+                for (const name of names) {
+                    if (!mentionsName(clause, name)) continue;
+                    markPlaceStatus(this.store, { name, state, source: { kind: 'told', name: e.speaker, event_id: eventId }, day: this.day() });
+                }
+            }
+        } catch (err) { console.warn('[memory] spoken correction skipped:', err?.message || err); }
+    }
+
+    /** What the sender actually said about `name` recently: did they give coordinates, or mean "here"? */
+    _toldAbout(sender, name, x, z) {
+        const heard = this.store.eventsBySpeaker(sender, 6).filter(ev => ev.kind === 'heard');
+        const ev = heard.find(h => mentionsName(h.text, name));
+        if (!ev) return null;
+        const nums = (ev.text.match(/-?\d+(?:\.\d+)?/g) ?? []).map(Number);
+        const gaveCoords = nums.some(n => Math.abs(n - x) <= 2) && nums.some(n => Math.abs(n - z) <= 2);
+        return { eventId: ev.id, gaveCoords, here: DEICTIC.test(ev.text) };
+    }
+
     // ---- deterministic write commands ----
     rememberPlace(name, x, z, { radius = 32 } = {}) {
         return this._safe(() => {
             const p = this.pos();
             const sender = this.agent?.last_sender;
-            let source;
-            if (p && dist(p.x, p.z, x, z) <= NEAR_ENOUGH_TO_OBSERVE) source = { kind: 'observed', name: 'self' };
-            else if (sender && sender !== this.selfName && sender !== 'system') source = { kind: 'told', name: sender };
-            else source = { kind: 'inferred', name: 'self' };
-            if (source.kind === 'told') source.event_id = this.store.eventsBySpeaker(sender, 1)[0]?.id ?? null;
+            const hasSender = !!sender && sender !== this.selfName && sender !== 'system';
             const day = this.day();
-            recordPlaceClaim(this.store, { name, x, z, radius, source, day });
+            // Did someone just tell us this name? Then what THEY said decides the location, not the caller's guess.
+            const told = hasSender ? this._toldAbout(sender, name, x, z) : null;
+            if (told && !told.gaveCoords && !told.here) {
+                // "Milkantis is home": a name with no place. The caller supplied coordinates on its own (often its own
+                // position); recording them as seen/told would invent a location and later attach surveys to it.
+                recordPlaceClaim(this.store, { name, source: { kind: 'told', name: sender, event_id: told.eventId }, day });
+                this.store.appendEvent({ kind: 'did', speaker: 'self', day, pos: p, text: `remembered place "${name}" with no location [told by ${sender}]` });
+                return `Remembered "${name}" [told by ${sender}] with NO location: they gave no coordinates and did not say it is here. Do not guess one; ask where it is.`;
+            }
+            let source, nameSource = null;
+            if (told) {
+                // coordinates or "here" came from their words: both the name and the position are theirs
+                source = { kind: 'told', name: sender, event_id: told.eventId };
+            } else if (p && dist(p.x, p.z, x, z) <= NEAR_ENOUGH_TO_OBSERVE) source = { kind: 'observed', name: 'self' };
+            else if (hasSender) source = { kind: 'told', name: sender, event_id: this.store.eventsBySpeaker(sender, 1)[0]?.id ?? null };
+            else source = { kind: 'inferred', name: 'self' };
+            recordPlaceClaim(this.store, { name, x, z, radius, source, nameSource, day });
             this.store.appendEvent({ kind: 'did', speaker: 'self', day, pos: p, text: `remembered place "${name}" at (${x},${z}) [${source.kind}${source.kind === 'told' ? ' by ' + source.name : ''}]` });
             const how = source.kind === 'told' ? `told by ${source.name}` : source.kind === 'observed' ? 'I am here' : 'unverified';
             return `Remembered "${name}" around (${x},${z}), radius ${radius} [${how}].`;
+        }, 'Memory is unavailable.');
+    }
+
+    /** A correction about a known place: gone / exists / no_location. Source is whoever just spoke. */
+    updatePlace(name, change) {
+        return this._safe(() => {
+            const state = String(change ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+            const aliases = { destroyed: 'gone', removed: 'gone', no_longer_exists: 'gone', none: 'no_location', nowhere: 'no_location' };
+            const resolved = aliases[state] ?? state;
+            if (!['gone', 'exists', 'no_location'].includes(resolved)) return `Unknown change "${change}". Use gone, exists or no_location.`;
+            if (!this.store.findPlacesByName(name).length) { this.recordUnknown(name); return `No record of a place called "${name}", so nothing to update.`; }
+            const sender = this.agent?.last_sender;
+            const hasSender = !!sender && sender !== this.selfName && sender !== 'system';
+            const source = hasSender
+                ? { kind: 'told', name: sender, event_id: this.store.eventsBySpeaker(sender, 1)[0]?.id ?? null }
+                : { kind: 'inferred', name: 'self' };
+            const day = this.day();
+            const res = markPlaceStatus(this.store, { name, state: resolved, source, day });
+            if (!res) return `Could not update "${name}".`;
+            this.store.appendEvent({ kind: 'did', speaker: 'self', day, pos: this.pos(), text: `marked place "${name}" as ${resolved} [${source.kind}${hasSender ? ' by ' + sender : ''}]` });
+            const what = { gone: 'no longer exists', exists: 'still exists', no_location: 'has no known location' }[resolved];
+            return `Noted: "${name}" ${what} [${hasSender ? 'told by ' + sender : 'unverified'}].`
+                + (res.keptObserved ? ' I still have a position I saw myself; both are kept and flagged as a conflict.' : '');
         }, 'Memory is unavailable.');
     }
 
@@ -207,13 +279,17 @@ export class MemoryManager {
     knownPlaces(limit = 10) {
         return this._safe(() => {
             const p = this.pos() ?? { x: 0, z: 0 };
-            const all = nearestPlaces(this.store, p.x, p.z, 1000);
-            if (!all.length) return 'No known places yet.';
+            const all = nearestPlaces(this.store, p.x, p.z, 1000, { includeGone: true });
+            const noLocation = this.store.listPlaces().filter(pl => pl.name && !Number.isFinite(pl.cx)).map(pl => pl.name);
+            if (!all.length && !noLocation.length) return 'No known places yet.';
             const rows = all.slice(0, limit).map(({ place, d, dir }) => {
                 const v = visitInfo(this.store, place.id).visited ? 'visited' : 'heard';
-                return `${placeDisplayName(this.store, place)} (${Math.round(place.cx)},${Math.round(place.cz)}) ${Math.round(d)}${dir} ${v}`;
+                const gone = placeStatus(this.store, place.id)?.state === 'gone' ? ' GONE (was there)' : '';
+                return `${placeDisplayName(this.store, place)} (${Math.round(place.cx)},${Math.round(place.cz)}) ${Math.round(d)}${dir} ${v}${gone}`;
             });
-            return 'Known places (nearest first): ' + rows.join('; ') + (all.length > limit ? `; +${all.length - limit} more (use !recallPlace or !searchMemory)` : '');
+            return 'Known places (nearest first): ' + (rows.join('; ') || 'none with a location')
+                + (all.length > limit ? `; +${all.length - limit} more (use !recallPlace or !searchMemory)` : '')
+                + (noLocation.length ? `. Named but with no known location: ${noLocation.join(', ')}` : '');
         }, 'Memory is unavailable.');
     }
 

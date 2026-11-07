@@ -155,7 +155,7 @@ export async function retrieve({ store, turns = [], position = null, maxChars = 
     }
 
     if (!lines.length) return result;
-    const head = 'RECORDS (prefer [observed] over [told]; cite who said it):';
+    const head = 'RECORDS (prefer [observed] over [told]; cite who; on CONFLICT or GONE give both sides):';
     let out = head;
     for (const l of lines) {
         if (out.length + l.length + 1 > maxChars) { if (out === head) out += '\n' + clip(l, maxChars - head.length - 1); break; }

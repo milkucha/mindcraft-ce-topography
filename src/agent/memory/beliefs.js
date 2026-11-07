@@ -39,6 +39,15 @@ export function placeClaims(store, placeId, predicate = null) {
     return out;
 }
 
+/**
+ * Live status of a place from its 'status' claims: 'gone' | 'exists' | 'no_location' (null when nobody said).
+ * Ranked like any other claim (observed > told > inferred, newest first); nothing is deleted.
+ */
+export function placeStatus(store, placeId) {
+    const best = belief(placeClaims(store, placeId, 'status')).best;
+    return best ? { state: String(best.value), claim: best } : null;
+}
+
 /** Refresh derived cache columns (name, centre, area) from the claims. Safe to call any time. */
 export function refreshPlace(store, placeId) {
     const place = store.getPlace(placeId);
@@ -51,6 +60,9 @@ export function refreshPlace(store, placeId) {
         const bbox = loc.bbox ?? null;
         const r = loc.r ?? (bbox ? Math.hypot(bbox.x2 - bbox.x1, bbox.z2 - bbox.z1) / 2 : 32);
         if (place.cx !== loc.x || place.cz !== loc.z || place.radius !== r) { patch.cx = loc.x; patch.cz = loc.z; patch.radius = r; patch.bbox = bbox; }
+    } else if (Number.isFinite(place.cx) && placeClaims(store, placeId, 'location').length === 0) {
+        // every location claim has been retracted: stop advertising a position
+        patch.cx = null; patch.cz = null; patch.radius = null; patch.bbox = null;
     }
     if (Object.keys(patch).length) store.updatePlace(placeId, patch);
 }
@@ -103,6 +115,41 @@ export function linkLines(store, placeId) {
     return lines;
 }
 
+const SOURCE_LABEL = { observed: 'I saw', told: null, inferred: 'I inferred' };
+function claimVoice(c) {
+    if (c.source_kind === 'told') return `${who(c) ?? 'someone'} said`;
+    return SOURCE_LABEL[c.source_kind] ?? c.source_kind;
+}
+export const CONFLICT_DISTANCE = 48;
+
+/**
+ * Places where the live records disagree. Never resolves anything; it only makes the disagreement impossible
+ * to miss so the answer can give both sides with their sources.
+ */
+export function conflictLines(store, placeId) {
+    const out = [];
+    const locs = rankClaims(placeClaims(store, placeId, 'location')).filter(c => locOf(c));
+    const status = placeStatus(store, placeId);
+    for (let i = 0; i < locs.length && !out.length; i++) {
+        for (let j = i + 1; j < locs.length; j++) {
+            const a = locs[i], b = locs[j];
+            if (a.source_kind === b.source_kind && (a.source_name ?? null) === (b.source_name ?? null)) continue;
+            const la = locOf(a), lb = locOf(b);
+            const gap = dist(la.x, la.z, lb.x, lb.z);
+            if (gap <= Math.max(CONFLICT_DISTANCE, (la.r ?? 0) + (lb.r ?? 0))) continue;
+            out.push(`CONFLICT on location: ${claimVoice(a)} ${fmtPt(la)} but ${claimVoice(b)} ${fmtPt(lb)} (~${Math.round(gap)} apart). Give both, with who said each.`);
+            break;
+        }
+    }
+    if (status?.state === 'no_location' && locs.length)
+        out.push(`CONFLICT: ${claimVoice(status.claim)} it has no location, yet a location is recorded. Give both.`);
+    if (status?.state === 'gone') {
+        const later = locs.find(c => c.source_kind === 'observed' && c.ts > status.claim.ts);
+        if (later) out.push(`CONFLICT: ${claimVoice(status.claim)} it is gone, but I saw it afterwards (${when(later)}). Give both.`);
+    }
+    return out;
+}
+
 /** Compact provenance-bearing text for one place. */
 export function renderPlace(store, placeId, { now = Date.now() } = {}) {
     const place = store.getPlace(placeId);
@@ -110,11 +157,16 @@ export function renderPlace(store, placeId, { now = Date.now() } = {}) {
     const names = rankClaims(placeClaims(store, placeId, 'name'));
     const display = names[0] && typeof names[0].value === 'string' ? names[0].value : placeDisplayName(store, place);
     const parts = [];
+    const status = placeStatus(store, placeId);
+    if (status?.state === 'gone')
+        parts.push(`GONE: ${claimVoice(status.claim)} it no longer exists [${status.claim.source_kind}, ${when(status.claim)}].`);
     const locs = rankClaims(placeClaims(store, placeId, 'location')).filter(c => locOf(c));
     const firstObserved = locs.find(c => c.source_kind === 'observed') ?? null;
     const locTexts = locs.map(c => describeLocationClaim(c, firstObserved)).filter(Boolean);
-    if (locTexts.length) parts.push(locTexts[0] + (locTexts.length > 1 ? '. ' + locTexts.slice(1).join('; ') : '') + '.');
+    if (locTexts.length) parts.push((status?.state === 'gone' ? 'Earlier record: ' : '') + locTexts[0] + (locTexts.length > 1 ? '. ' + locTexts.slice(1).join('; ') : '') + '.');
+    else if (status?.state === 'no_location') parts.push(`no known location: ${claimVoice(status.claim)} it has none (${when(status.claim)}).`);
     else parts.push('location unknown.');
+    for (const l of conflictLines(store, placeId)) parts.push(l);
     const others = [...new Set(names.slice(1).filter(c => c.value !== names[0].value).map(c => `${c.value} (${c.source_kind}${who(c) ? ' by ' + who(c) : ''})`))];
     if (others.length) parts.push(`Also called ${others.slice(0, 2).join(', ')}.`);
     const desc = belief(placeClaims(store, placeId, 'description'));

@@ -17,6 +17,18 @@ export const memoryList = [
         }
     },
     {
+        name: '!updatePlace',
+        description: 'Correct a known place: gone, exists, or no_location (has no coordinates). Use for corrections, not !rememberPlace.',
+        params: {
+            'name': { type: 'string', description: 'Place name.' },
+            'change': { type: 'string', description: 'gone, exists or no_location.' }
+        },
+        perform: function (agent, name, change) {
+            const m = mem(agent);
+            return m ? m.updatePlace(name, change) : unavailable;
+        }
+    },
+    {
         name: '!recallPlace',
         description: 'What you know about a place: where, who said it, whether you visited.',
         params: { 'name': { type: 'string', description: 'Place name.' } },

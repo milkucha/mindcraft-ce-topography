@@ -17,6 +17,13 @@ export function tokenize(text, { keepStop = false } = {}) {
     return out;
 }
 
+const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** True when `name` appears in `text` as a whole word/phrase (case-insensitive, unicode-aware). */
+export function mentionsName(text, name) {
+    return new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRe(name)}([^\\p{L}\\p{N}]|$)`, 'iu').test(String(text ?? ''));
+}
+
 export function clip(text, n) {
     text = String(text ?? '').replace(/\s+/g, ' ').trim();
     return text.length > n ? text.slice(0, Math.max(0, n - 1)) + '…' : text;
