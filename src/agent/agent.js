@@ -600,6 +600,10 @@ export class Agent {
     
 
     cleanKill(msg='Killing agent process...', code=1) {
+        // The reason only went to history/chat, so a crash left just "exited with code 1" in the console.
+        const running = this.actions?.currentActionLabel;
+        console.error(`[cleanKill] ${this.name} exiting with code ${code}: ${msg}${running ? ` (running action: ${running})` : ''}`);
+        console.error(new Error('cleanKill called from').stack);
         this.history.add('system', msg);
         this.bot.chat(code > 1 ? 'Restarting.': 'Exiting.');
         this.history.save();
