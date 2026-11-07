@@ -3,12 +3,13 @@ import { actionsList } from './actions.js';
 import { queryList } from './queries.js';
 import { topographyList } from './topography.js';
 import { memoryList } from './memory.js';
+import { localBridgeList } from './local_bridge.js';
 import settings from '../settings.js';
 import { terrainUnavailableMessage } from '../topography_service.js';
 
 let suppressNoDomainWarning = true;
 
-const commandList = queryList.concat(topographyList, memoryList, actionsList);
+const commandList = queryList.concat(topographyList, memoryList, localBridgeList, actionsList);
 const commandMap = {};
 for (let command of commandList) {
     commandMap[command.name] = command;
@@ -22,6 +23,13 @@ function topographyDisabled(agent) {
     const profile = agent?.prompter?.profile;
     const enabled = profile?.topography_enabled ?? settings.topography_enabled ?? true;
     return enabled === false;
+}
+
+// Temporary A/B test aid: client-side bridge planner, opt-in per profile (`local_bridge_plan: true`).
+const LOCAL_BRIDGE_COMMANDS = new Set(['!bridgePlan']);
+
+function localBridgeDisabled(agent) {
+    return agent?.prompter?.profile?.local_bridge_plan !== true;
 }
 
 export function getCommand(name) {
@@ -230,6 +238,8 @@ export async function executeCommand(agent, message) {
     else {
         if (topographyDisabled(agent) && TOPOGRAPHY_COMMANDS.has(parsed.commandName))
             return `Command ${parsed.commandName} is disabled for this agent.`;
+        if (localBridgeDisabled(agent) && LOCAL_BRIDGE_COMMANDS.has(parsed.commandName))
+            return `Command ${parsed.commandName} is disabled for this agent.`;
         if (TOPOGRAPHY_COMMANDS.has(parsed.commandName)) {
             const unavailable = terrainUnavailableMessage(agent);
             if (unavailable)
@@ -266,6 +276,9 @@ export function getCommandDocs(agent) {
     Do not use codeblocks. Use double quotes for strings. Only use one command in each response, trailing commands and comments will be ignored.\n`;
     for (let command of commandList) {
         if (topographyDisabled(agent) && TOPOGRAPHY_COMMANDS.has(command.name)) {
+            continue;
+        }
+        if (localBridgeDisabled(agent) && LOCAL_BRIDGE_COMMANDS.has(command.name)) {
             continue;
         }
         if (agent.blocked_actions.includes(command.name)) {
