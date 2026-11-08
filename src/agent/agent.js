@@ -8,6 +8,7 @@ import { containsCommand, commandExists, executeCommand, truncCommandMessage, is
 import { ActionManager } from './action_manager.js';
 import { NPCContoller } from './npc/controller.js';
 import { MemoryBank } from './memory_bank.js';
+import { MemoryManager } from './memory/index.js';
 import { SelfPrompter } from './self_prompter.js';
 import convoManager from './conversation.js';
 import { handleTranslation, handleEnglishTranslation } from '../utils/translator.js';
@@ -18,11 +19,14 @@ import { Task } from './tasks/tasks.js';
 import { speak } from './speak.js';
 import { AgentSystem } from './agents/system.js';
 import { DecisionService } from './decisions.js';
+import { pushPositionIfMoved } from './topography_service.js';
 import { log, validateNameFormat, handleDisconnection } from './connection_handler.js';
 
 export class Agent {
     async start(load_mem=false, init_message=null, count_id=0) {
         this.last_sender = null;
+        this.last_activity = Date.now();
+        this._idle_chat_pending = false;
         this.count_id = count_id;
         this._disconnectHandled = false;
 
@@ -46,6 +50,8 @@ export class Agent {
         this.coder = new Coder(this);
         this.npc = new NPCContoller(this);
         this.memory_bank = new MemoryBank();
+        this.memory = MemoryManager.create(this); // per-agent archive: bots/<name>/memory.db
+        this.memory_bank.attach(this.memory);
         this.self_prompter = new SelfPrompter(this);
         this.decisions = new DecisionService(this, this.prompter.profile.decisions ?? settings.decisions);
         convoManager.initAgent(this);
@@ -117,7 +123,8 @@ export class Agent {
                 clearTimeout(spawnTimeout);
                 addBrowserViewer(this.bot, count_id);
                 console.log('Initializing vision intepreter...');
-                this.vision_interpreter = new VisionInterpreter(this, settings.allow_vision);
+                const allow_vision = this.prompter.profile.allow_vision ?? settings.allow_vision;
+        this.vision_interpreter = new VisionInterpreter(this, allow_vision);
 
                 // wait for a bit so stats are not undefined
                 await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -125,6 +132,7 @@ export class Agent {
                 console.log(`${this.name} spawned.`);
                 this.clearBotLogs();
               
+                this.memory?.attachBot(this.bot);
                 this._setupEventHandlers(save_data, init_message);
                 this.startEvents();
               
@@ -221,9 +229,6 @@ export class Agent {
         else if (init_message) {
             await this.handleMessage('system', init_message, 2);
         }
-        else {
-            this.openChat("Hello world! I am "+this.name);
-        }
     }
 
     checkAllPlayersPresent() {
@@ -264,6 +269,7 @@ export class Agent {
     }
 
     async handleMessage(source, message, max_responses=null) {
+        this.last_activity = Date.now();
         await this.checkTaskDone();
         if (!source || !message) {
             console.warn('Received empty message from', source);
@@ -536,19 +542,85 @@ export class Agent {
 
     async update(delta) {
         this.agentSystem?.tick();
+        if (!this.isIdle() || this.bot?.pathfinder?.isMoving?.())
+            this.last_activity = Date.now();
+        pushPositionIfMoved(this);
+        this.memory?.tick();
         await this.bot.modes.update();
         this.self_prompter.update(delta);
         await this.checkTaskDone();
+        this.maybeIdleChat().catch(error => console.warn('Idle chat failed:', error?.message || error));
     }
 
     isIdle() {
         return !this.taskAgent?.is_running && !this.actions.executing;
     }
+
+    getIdleChatConfig() {
+        const profile = this.prompter?.profile || {};
+        return {
+            enabled: profile.idle_chat ?? settings.idle_chat ?? true,
+            interval: Number(profile.idle_chat_interval_ms ?? settings.idle_chat_interval_ms ?? 120000),
+        };
+    }
+
+    findIdleChatTarget() {
+        if (!this.bot?.entity)
+            return null;
+        let best = null;
+        for (const [name, player] of Object.entries(this.bot.players || {})) {
+            if (name === this.name || convoManager.isOtherAgent(name) || !player?.entity)
+                continue;
+            const distance = this.bot.entity.position.distanceTo(player.entity.position);
+            if (!best || distance < best.distance)
+                best = { name, distance };
+        }
+        return best?.name || null;
+    }
+
+    async maybeIdleChat() {
+        if (this._idle_chat_pending || !this.bot?.entity)
+            return;
+        if (this.self_prompter.isActive() || this.self_prompter.isPaused())
+            return;
+        if (this.task?.data)
+            return;
+        const { enabled, interval } = this.getIdleChatConfig();
+        if (!enabled || !Number.isFinite(interval) || interval <= 0)
+            return;
+        if (Date.now() - this.last_activity < interval)
+            return;
+        const target = this.findIdleChatTarget();
+        if (!target)
+            return;
+
+        this.last_activity = Date.now();
+        this._idle_chat_pending = true;
+        this.last_sender = target;
+        const prompt =
+            `You are ${this.name}, chatting casually with ${target}. You have been idle for a while. ` +
+            `Say one short, natural sentence: comment on something you notice around you or ask a casual question. ` +
+            `Do not use commands. Do not claim you built, changed, or did anything. ` +
+            `Do not give exact coordinates or distances. Draw on your memory if useful.`;
+        try {
+            // Use a direct prompt with no recent action history, and never execute commands.
+            const response = await this.prompter.promptConvo([
+                { role: 'system', content: prompt }
+            ]);
+            if (response && !containsCommand(response))
+                this.openChat(response);
+        } catch (error) {
+            console.warn('Idle chat failed:', error?.message || error);
+        } finally {
+            this._idle_chat_pending = false;
+        }
+    }
     
 
     cleanKill(msg='Killing agent process...', code=1) {
         this.agentSystem?.cancelTask();
-        console.error(`[cleanKill] ${this.name}: ${msg} (exit code ${code})`);
+        const running = this.actions?.currentActionLabel;
+        console.error(`[cleanKill] ${this.name}: ${msg} (exit code ${code})${running ? ` (running action: ${running})` : ''}`);
         this.history.add('system', msg);
         this.bot.chat(code > 1 ? 'Restarting.': 'Exiting.');
         this.history.save();

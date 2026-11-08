@@ -9,12 +9,13 @@ import { Vec3 } from 'vec3';
 import {ESLint} from "eslint";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+import { botDir } from '../utils/botpaths.js';
 
 export class Coder {
     constructor(agent) {
         this.agent = agent;
         this.file_counter = 0;
-        this.fp = '/bots/'+agent.name+'/action-code/';
+        this.fp = botDir(agent.name).slice(1) + '/action-code/'; // keeps the leading slash this class expects
         this.code_template = '';
         this.code_lint_template = '';
         this.ready = null;

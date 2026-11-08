@@ -1,6 +1,7 @@
 import * as skills from '../library/skills.js';
 import settings from '../settings.js';
 import convoManager from '../conversation.js';
+import pf from 'mineflayer-pathfinder';
 
 
 function runAsAction (actionFn, resume = false, timeout = -1) {
@@ -43,10 +44,18 @@ export const actionsList = [
             }
             let result = "";
             const actionFn = async () => {
+                const noticeMs = Number(settings.long_task_notice_ms ?? 12000);
+                const noticeEnabled = agent.prompter?.profile?.long_task_notice ?? settings.long_task_notice ?? true;
+                const timer = noticeEnabled && Number.isFinite(noticeMs) && noticeMs > 0
+                    ? setTimeout(() => agent.openChat("Still working on this — it's taking a while."), noticeMs)
+                    : null;
                 try {
                     result = await agent.coder.generateCode(agent.history);
                 } catch (e) {
                     result = 'Error generating code: ' + e.toString();
+                } finally {
+                    if (timer)
+                        clearTimeout(timer);
                 }
             };
             await agent.actions.runAction('action:newAction', actionFn, {timeout: settings.code_timeout_mins});
@@ -162,7 +171,7 @@ export const actionsList = [
     },
     {
         name: '!rememberHere',
-        description: 'Save the current location with a given name.',
+        description: 'Save the current location with a given name (stored in your memory archive).',
         params: {'name': { type: 'string', description: 'The name to remember the location as.' }},
         perform: async function (agent, name) {
             const pos = agent.bot.entity.position;
@@ -179,6 +188,12 @@ export const actionsList = [
             if (!pos) {
                 skills.log(agent.bot, `No location named "${name}" saved.`);
                 return false;
+            }
+            if (pos[1] === null || pos[1] === undefined) {
+                // known only as an area (x,z): walk to within ~8 blocks, whatever the height
+                await skills.goToGoal(agent.bot, new pf.goals.GoalNearXZ(pos[0], pos[2], 8));
+                skills.log(agent.bot, `Went toward "${name}" around (${Math.round(pos[0])},${Math.round(pos[2])}); you are now at (${Math.round(agent.bot.entity.position.x)},${Math.round(agent.bot.entity.position.z)}).`);
+                return true;
             }
             return await skills.goToPosition(agent.bot, pos[0], pos[1], pos[2], 1);
         })
@@ -434,7 +449,7 @@ export const actionsList = [
     },
     {
         name: '!lookAtPlayer',
-        description: 'Look at a player or look in the same direction as the player.',
+        description: 'Look at a player or look in the same direction as the player. Returns the facing direction.',
         params: {
             'player_name': { type: 'string', description: 'Name of the target player' },
             'direction': {

@@ -1,0 +1,5 @@
+{
+    "name": "Agent_C",
+    "model": "deepseek-flash",
+    "allow_vision": false
+}
