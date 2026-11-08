@@ -34,3 +34,5 @@ site/
 
 # Generated augments
 src/agent/commands/tools/augments/
+
+neuvalus_noperc.json
