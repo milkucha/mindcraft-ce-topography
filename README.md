@@ -5,6 +5,11 @@
 <p align="center">Crafting minds for Minecraft with LLMs and <a href="https://prismarinejs.github.io/mineflayer/#/">Mineflayer!</a></p>
 <p align="center">The experimental version of <a href="https://github.com/mindcraft-bots/mindcraft">Mindcraft!</a>
 
+<p align="center"><strong>Mindcraft CE Topography</strong>: <a href="https://github.com/mindcraft-ce/mindcraft-ce">Mindcraft CE</a> plus terrain perception, place memory and settlement surveys.</p>
+
+> **Licensing.** This fork is MIT (upstream Mindcraft and CE notices retained in [LICENSE](./LICENSE)). The Topography features need two separate components that are **not** MIT but CC BY-NC 4.0 (non-commercial): the
+> `topography-service` map service and the `topography-plugin` Fabric mod. They live in the Mindcraft-Topography umbrella checkout and are not published yet; add links here once they are.
+
 <p align="center">
   <a href="docs/FAQ.md#common-issues">FAQ</a> | 
   <a href="https://discord.gg/mindcraft-ce">Discord Support</a> | 
