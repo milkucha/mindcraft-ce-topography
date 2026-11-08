@@ -378,6 +378,30 @@ If you try to use an unsupported model, then it will default to a simple word-ov
 
 Voice synthesis models are used to narrate bot responses and specified with `speak_model`. This field is parsed differently than other models and only supports strings formatted as `"{api}/{model}/{voice}"`, like `"openai/tts-1/echo"`. We only support `openai` and `google` for voice synthesis.
 
+## Memory archive (per-agent)
+
+Each agent keeps `bots/<name>/memory.db` (SQLite via `node:sqlite`, JSONL fallback `memory.jsonl`). It holds an append-only event log (heard / said / did / unknown), place and person claims with provenance (observed > told > inferred, nothing is deleted, newer claims supersede older ones), observation snapshots of settlements, and link candidates between told and observed places (never auto-merged; confirm with `!confirmPlace` or by a later observation that clearly contains the told point). The prompt only carries a small core memory plus on-demand records.
+
+Prompt placeholders (in `conversing` and `coding`): `$PLACES` (one line, ~150 chars, nearest known places) and `$RECALL` (<= ~900 chars of records relevant to the recent messages, each with its source; a `NO RECORD` line when asked about something never seen or told). `saving_memory` uses `$CORE_CHARS` and returns JSON `{"memory": ..., "facts": [...]}`; plain-text replies still work.
+
+Commands: `!rememberPlace(name,x,z)`, `!recallPlace(name)`, `!knownPlaces`, `!whoIs(name)`, `!searchMemory(query)`, `!confirmPlace(name)`; `!rememberHere`, `!goToRememberedPlace`, `!savedPlaces` are now backed by the archive.
+
+Settings (all optional, read from settings or the profile): `core_memory_chars` (800), `memory_archive` (true), `memory_backend` (`auto|sqlite|jsonl`), `memory_recall_chars` (900), `memory_places_chars` (150), `memory_use_embeddings` (false), `memory_auto_observe` (true; needs the terrain service), `memory_resurvey_minutes` (30), `topography_seen_only` (true; sends `agent=<name>` on terrain requests and reports seen chunks via `POST /seen`).
+
+## Worlds and the A/B agents
+
+Bot data (memory, histories, logs, screenshots, action code) is namespaced per Minecraft world: set
+`world_name` in `settings.js` (or the `MINDCRAFT_WORLD` environment variable; `scripts/run-all.ps1`
+sets it from the save folder name) and files go to `bots/<name>/worlds/<world_name>/`. Empty keeps the
+legacy `bots/<name>/`. Use a new name for every new world; the terrain service keeps a separate
+database per world on its own.
+
+`agent_a.json` .. `agent_d.json` are an A/B set on one model (`deepseek-flash`): A = upstream
+Mindcraft (every fork feature off, upstream prompts), B = A + vision (`gemini-3.5-flash`), C = full
+topography + memory pipeline, D = C + vision. Names are `Agent_A`..`Agent_D` (Mindcraft requires
+3-16 characters). Fork features can be switched per profile: `topography_enabled`,
+`memory_archive`, `memory_auto_observe`, `idle_chat`, `long_task_notice`.
+
 ## Specifying Profiles via Command Line
 
 By default, the program will use the profiles specified in `settings.js`. You can specify one or more agent profiles using the `--profiles` argument: `node main.js --profiles ./andy.json ./profiles/claude.json`

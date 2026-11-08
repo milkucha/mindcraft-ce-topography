@@ -5,6 +5,8 @@ import { SkillLibrary } from "../agent/library/skill_library.js";
 import { stringifyTurns } from '../utils/text.js';
 import { getCommand } from '../agent/commands/index.js';
 import settings from '../agent/settings.js';
+import { botDir } from '../utils/botpaths.js';
+import { fetchPerception, pushPosition, isOverworld } from '../agent/topography_service.js';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -92,8 +94,8 @@ export class Prompter {
         }
 
         this.skill_libary = new SkillLibrary(agent, this.embedding_model);
-        mkdirSync(`./bots/${name}`, { recursive: true });
-        writeFileSync(`./bots/${name}/last_profile.json`, JSON.stringify(this.profile, null, 4), (err) => {
+        mkdirSync(botDir(name), { recursive: true });
+        writeFileSync(`${botDir(name)}/last_profile.json`, JSON.stringify(this.profile, null, 4), (err) => {
             if (err) {
                 throw new Error('Failed to save profile:', err);
             }
@@ -166,6 +168,17 @@ export class Prompter {
             prompt = prompt.replaceAll('$EXAMPLES', await examples.createExampleMessage(messages));
         if (prompt.includes('$MEMORY'))
             prompt = prompt.replaceAll('$MEMORY', this.agent.history.memory);
+        if (prompt.includes('$CORE_CHARS'))
+            prompt = prompt.replaceAll('$CORE_CHARS', String(settings.core_memory_chars ?? 800));
+        // Archive recall: relevant records with sources ($RECALL) and a one-line nearby-places index ($PLACES).
+        if (prompt.includes('$RECALL')) {
+            const recalled = await this.agent.memory?.recall(messages) ?? '';
+            prompt = prompt.replaceAll('$RECALL', () => recalled);
+        }
+        if (prompt.includes('$PLACES')) {
+            const places = this.agent.memory?.placesText() ?? '';
+            prompt = prompt.replaceAll('$PLACES', () => places);
+        }
         if (prompt.includes('$TO_SUMMARIZE'))
             prompt = prompt.replaceAll('$TO_SUMMARIZE', stringifyTurns(to_summarize));
         if (prompt.includes('$CONVO'))
@@ -193,6 +206,31 @@ export class Prompter {
                 }
                 prompt = prompt.replaceAll('$BLUEPRINTS', blueprints.slice(0, -2));
             }
+        }
+        const topographyEnabled = this.profile?.topography_enabled ?? settings.topography_enabled ?? true;
+        const perceptionEnabled = topographyEnabled && (this.profile?.topography_perception ?? settings.topography_perception ?? true);
+        const topographyDebug = this.profile?.topography_debug ?? settings.topography_debug ?? false;
+        if (prompt.includes('$TOPOGRAPHY')) {
+            let perception = '';
+            if (perceptionEnabled) {
+                try {
+                    perception = await fetchPerception(this.agent, { enabled: perceptionEnabled, debug: topographyDebug });
+                } catch (error) {
+                    console.warn('Failed to build topography perception:', error);
+                    perception = '';
+                }
+            }
+            prompt = prompt.replaceAll('$TOPOGRAPHY', perception);
+            if (perceptionEnabled)
+                pushPosition(this.agent, { enabled: perceptionEnabled, debug: topographyDebug });
+        }
+        if (prompt.includes('$TOPO_GUIDE')) {
+            prompt = prompt.replaceAll(
+                '$TOPO_GUIDE',
+                perceptionEnabled && isOverworld(this.agent)
+                    ? 'When a TOPOGRAPHY block is present, prefer it for nearby terrain and water before scanning. North is -Z, south is +Z. For highest/lowest ground or area/direction questions, use its highest ground, highest by direction, and built lines, or !area_composition. !topography is a 1D line profile for bridges and roads, not an area search.'
+                    : ''
+            );
         }
 
         // check if there are any remaining placeholders with syntax $<word>
@@ -353,9 +391,9 @@ export class Prompter {
         let task_id = this.agent.task.task_id;
         let logDir;
         if (task_id == null) {
-            logDir = path.join(__dirname, `../../bots/${this.agent.name}/logs`);
+            logDir = path.join(__dirname, '../..', botDir(this.agent.name), 'logs');
         } else {
-            logDir = path.join(__dirname, `../../bots/${this.agent.name}/logs/${task_id}`);
+            logDir = path.join(__dirname, '../..', botDir(this.agent.name), 'logs', String(task_id));
         }
 
         await fs.mkdir(logDir, { recursive: true });

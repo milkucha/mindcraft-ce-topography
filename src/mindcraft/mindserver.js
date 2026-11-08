@@ -296,6 +296,11 @@ export function createMindServer(host_public = false, port = 8080) {
                 console.warn(`Agent ${curAgentName} tried to send a message to unavailable agent ${agentName}`);
                 return;
             }
+            if (!agent_connections[agentName].socket) {
+                // the target is between processes (restarting); emitting on null would crash the whole MindServer
+                console.warn(`Agent ${agentName} is disconnected; dropped message from ${curAgentName}`);
+                return;
+            }
             console.log(`${curAgentName} sending message to ${agentName}: ${json.message}`);
             target.socket.emit('chat-message', curAgentName, json);
         });

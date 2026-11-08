@@ -99,10 +99,10 @@ export class Gemini {
             console.log('Received.');
         } catch (err) {
             console.log(err);
-            if (err.message.includes("Image input modality is not enabled for models/")) {
+            if (err.message?.includes("Image input modality is not enabled for models/")) {
                 res = "Vision is only supported by certain models.";
             } else {
-                res = "An unexpected error occurred, please try again.";
+                res = `Vision request failed: ${err.message || err}`;
             }
         }
         return res;
