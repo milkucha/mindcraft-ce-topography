@@ -7,7 +7,7 @@
 
 <p align="center"><strong>Mindcraft CE Topography</strong>: <a href="https://github.com/mindcraft-ce/mindcraft-ce">Mindcraft CE</a> plus terrain perception, place memory and settlement surveys.</p>
 
-> **Licensing.** This fork is MIT (upstream Mindcraft and CE notices retained in [LICENSE](./LICENSE)). The Topography features need two separate components that are **not** MIT but CC BY-NC 4.0 (non-commercial): the
+> **Licensing.** This fork is MIT (upstream Mindcraft and CE notices retained in [LICENSE](./LICENSE)). The Topography features need two separate components that are **not** MIT but PolyForm Noncommercial 1.0.0 (non-commercial): the
 > `topography-service` map service and the `topography-plugin` Fabric mod. They live in the Mindcraft-Topography umbrella checkout and are not published yet; add links here once they are.
 
 <p align="center">
